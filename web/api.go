@@ -27,6 +27,7 @@ type ProxyInfo struct {
 	ProxyPort int    `json:"proxyPort"`
 	Online    bool   `json:"online"`
 	LatencyMs int64  `json:"latencyMs"`
+	Config    string `json:"config,omitempty"`
 }
 
 type PublicProxyInfo struct {
@@ -100,6 +101,7 @@ func toProxyInfo(proxy *models.ProxyConfig, online bool, latency time.Duration, 
 		ProxyPort: startPort + proxy.Index,
 		Online:    online,
 		LatencyMs: latency.Milliseconds(),
+		Config:    sanitizeConfig(proxy.SourceLine),
 	}
 }
 

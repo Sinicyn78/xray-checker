@@ -29,6 +29,7 @@ type EndpointInfo struct {
 	Status     bool
 	Latency    time.Duration
 	StableID   string
+	Config     string
 }
 
 func IndexHandler(version string, proxyChecker *checker.ProxyChecker) http.HandlerFunc {
@@ -109,6 +110,7 @@ type endpointView struct {
 	URL        string `json:"url,omitempty"`
 	ServerInfo string `json:"serverInfo,omitempty"`
 	ProxyPort  int    `json:"proxyPort,omitempty"`
+	Config     string `json:"config,omitempty"`
 }
 
 func buildEndpointsJSON(endpoints []EndpointInfo, showServerDetails bool, isPublic bool) template.JS {
@@ -128,6 +130,7 @@ func buildEndpointsJSON(endpoints []EndpointInfo, showServerDetails bool, isPubl
 		}
 		if !isPublic {
 			item.URL = ep.URL
+			item.Config = sanitizeConfig(ep.Config)
 		}
 		if showServerDetails {
 			item.ServerInfo = sanitizeText(ep.ServerInfo)
@@ -220,6 +223,7 @@ func RegisterConfigEndpoints(proxies []*models.ProxyConfig, proxyChecker *checke
 			Status:     status,
 			Latency:    latency,
 			StableID:   proxy.StableID,
+			Config:     proxy.SourceLine,
 		})
 	}
 

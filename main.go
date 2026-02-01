@@ -216,7 +216,7 @@ func main() {
 }
 
 func cleanupBadFileConfigs(proxyChecker *checker.ProxyChecker) {
-	const badLatencyThreshold = time.Millisecond * 1000
+	const badDurationThreshold = time.Minute * 5
 
 	badByFile := make(map[string]map[string]bool)
 	proxies := proxyChecker.GetProxies()
@@ -226,8 +226,11 @@ func cleanupBadFileConfigs(proxyChecker *checker.ProxyChecker) {
 		}
 
 		status, latency, err := proxyChecker.GetProxyStatus(proxy.Name)
-		isBad := err != nil || !status || latency == 0 || latency > badLatencyThreshold
-		if !isBad {
+		if err == nil && status && latency > 0 && latency <= checker.BadLatencyThreshold() {
+			continue
+		}
+
+		if since, ok := proxyChecker.GetBadSince(proxy); !ok || time.Since(since) < badDurationThreshold {
 			continue
 		}
 

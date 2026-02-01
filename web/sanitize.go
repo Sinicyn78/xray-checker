@@ -30,3 +30,18 @@ func sanitizeText(value string) string {
 
 	return value
 }
+
+func sanitizeConfig(value string) string {
+	if value == "" {
+		return ""
+	}
+	// Keep original payload as much as possible, only ensure valid UTF-8 and remove control chars.
+	value = strings.ToValidUTF8(value, "")
+	value = strings.Map(func(r rune) rune {
+		if r < 32 {
+			return -1
+		}
+		return r
+	}, value)
+	return strings.TrimSpace(value)
+}

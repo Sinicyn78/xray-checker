@@ -34,6 +34,14 @@ type ProxyChecker struct {
 	checkMethod     string
 	mu              sync.RWMutex
 	generation      uint64
+	badSinceMu      sync.RWMutex
+	badSince        map[string]time.Time
+}
+
+const badLatencyThreshold = time.Millisecond * 1000
+
+func BadLatencyThreshold() time.Duration {
+	return badLatencyThreshold
 }
 
 func NewProxyChecker(proxies []*models.ProxyConfig, startPort int, ipCheckURL string, ipCheckTimeout int, genMethodURL string, downloadURL string, downloadTimeout int, downloadMinSize int64, checkMethod string) *ProxyChecker {
@@ -50,6 +58,7 @@ func NewProxyChecker(proxies []*models.ProxyConfig, startPort int, ipCheckURL st
 		downloadTimeout: downloadTimeout,
 		downloadMinSize: downloadMinSize,
 		checkMethod:     checkMethod,
+		badSince:        make(map[string]time.Time),
 	}
 }
 
@@ -112,6 +121,7 @@ func (pc *ProxyChecker) checkProxyInternal(proxy *models.ProxyConfig, expectedGe
 			0,
 		)
 		pc.currentMetrics.Store(metricKey, false)
+		pc.markBad(metricKey)
 	}
 
 	setFailedLatency := func() {
@@ -126,6 +136,7 @@ func (pc *ProxyChecker) checkProxyInternal(proxy *models.ProxyConfig, expectedGe
 			time.Duration(0),
 		)
 		pc.latencyMetrics.Store(metricKey, time.Duration(0))
+		pc.markBad(metricKey)
 	}
 
 	proxyURL := fmt.Sprintf("socks5://127.0.0.1:%d", pc.startPort+proxy.Index)
@@ -197,7 +208,41 @@ func (pc *ProxyChecker) checkProxyInternal(proxy *models.ProxyConfig, expectedGe
 
 		pc.latencyMetrics.Store(metricKey, latency)
 		pc.currentMetrics.Store(metricKey, true)
+		if latency > badLatencyThreshold {
+			pc.markBad(metricKey)
+		} else {
+			pc.clearBad(metricKey)
+		}
 	}
+}
+
+func (pc *ProxyChecker) markBad(metricKey string) {
+	pc.badSinceMu.Lock()
+	defer pc.badSinceMu.Unlock()
+	if _, exists := pc.badSince[metricKey]; !exists {
+		pc.badSince[metricKey] = time.Now()
+	}
+}
+
+func (pc *ProxyChecker) clearBad(metricKey string) {
+	pc.badSinceMu.Lock()
+	defer pc.badSinceMu.Unlock()
+	delete(pc.badSince, metricKey)
+}
+
+func (pc *ProxyChecker) GetBadSince(proxy *models.ProxyConfig) (time.Time, bool) {
+	metricKey := fmt.Sprintf("%s|%s:%d|%s|%s|%s",
+		proxy.Protocol,
+		proxy.Server,
+		proxy.Port,
+		proxy.Name,
+		proxy.SubName,
+		proxy.StableID,
+	)
+	pc.badSinceMu.RLock()
+	defer pc.badSinceMu.RUnlock()
+	ts, ok := pc.badSince[metricKey]
+	return ts, ok
 }
 
 func (pc *ProxyChecker) checkByIP(client *http.Client) (bool, string, time.Duration, error) {

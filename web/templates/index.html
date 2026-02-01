@@ -914,11 +914,11 @@
             </div>
 
             {{ if not .IsPublic }}
-            <!-- Copy -->
+            <!-- Copy Config -->
             <button
-              @click="copyUrl(proxy)"
+              @click="copyConfig(proxy)"
               class="hidden sm:block p-1.5 rounded text-muted btn-icon transition-all"
-              title="Copy URL"
+              title="Copy Config"
             >
               <svg
                 class="w-3.5 h-3.5"
@@ -1255,7 +1255,7 @@
                     name: p.name,
                     stableId: p.stableId,
                     {{ if .ShowServerDetails }}serverInfo: p.server + ':' + p.port, proxyPort: p.proxyPort, {{ end }}
-                    {{ if not .IsPublic }}url: "./config/" + p.stableId, {{ end }}
+                    {{ if not .IsPublic }}url: "./config/" + p.stableId, config: p.config, {{ end }}
                     index: p.index || 0,
                     status: !!p.online,
                     latencyMs: p.latencyMs || 0,
@@ -1297,11 +1297,15 @@
             this.countdown = {{ .CheckInterval }};
           },
 
-          async copyUrl(proxy) {
-            const url = new URL(proxy.url, location.href).toString();
-            try { await navigator.clipboard.writeText(url); }
-            catch { const t = Object.assign(document.createElement('textarea'), {value: url, style: 'position:fixed;opacity:0'}); document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
-            this.showToast('Copied!');
+          async copyConfig(proxy) {
+            const value = proxy.config || '';
+            if (!value) {
+              this.showToast('No config');
+              return;
+            }
+            try { await navigator.clipboard.writeText(value); }
+            catch { const t = Object.assign(document.createElement('textarea'), {value: value, style: 'position:fixed;opacity:0'}); document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+            this.showToast('Config copied!');
           },
 
           showToast(msg) {
