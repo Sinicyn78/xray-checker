@@ -853,6 +853,7 @@
 
       <!-- Proxy Grid -->
       <div
+        data-proxy-grid
         x-show="showProxies"
         class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 mb-4"
       >
@@ -1306,6 +1307,52 @@
           }
         };
       }
+    </script>
+    <script>
+      // Fallback renderer: if Alpine fails to render cards, show a minimal list.
+      window.__endpoints = {{ .EndpointsJSON }};
+      setTimeout(() => {
+        try {
+          const grid = document.querySelector('[data-proxy-grid]');
+          if (!grid) return;
+          if (grid.querySelectorAll('.proxy-card').length > 0) return;
+          if (!Array.isArray(window.__endpoints) || window.__endpoints.length === 0) return;
+
+          const frag = document.createDocumentFragment();
+          for (const p of window.__endpoints) {
+            const card = document.createElement('div');
+            card.className = 'proxy-card card rounded-lg px-3 py-2.5 flex items-center gap-3';
+
+            const status = document.createElement('div');
+            status.className = 'w-2 h-2 rounded-full ' + (p.status ? 'status-online' : 'status-offline');
+            const statusWrap = document.createElement('div');
+            statusWrap.className = 'relative flex-shrink-0';
+            statusWrap.appendChild(status);
+
+            const info = document.createElement('div');
+            info.className = 'flex-1 min-w-0';
+            const name = document.createElement('span');
+            name.className = 'text-sm text-primary truncate block';
+            name.textContent = p.name || 'Unnamed';
+            info.appendChild(name);
+
+            const latency = document.createElement('div');
+            latency.className = 'text-xs tabular-nums ' + (p.latencyMs === 0 ? 'text-muted' : p.latencyMs < 500 ? 'latency-good' : p.latencyMs < 1000 ? 'latency-medium' : 'latency-bad');
+            latency.textContent = p.latency || 'n/a';
+
+            card.appendChild(statusWrap);
+            card.appendChild(info);
+            card.appendChild(latency);
+            frag.appendChild(card);
+          }
+
+          grid.innerHTML = '';
+          grid.appendChild(frag);
+          console.warn('Fallback renderer used: Alpine render missing.');
+        } catch (e) {
+          console.error('Fallback renderer error:', e);
+        }
+      }, 1000);
     </script>
   </body>
 </html>
