@@ -1066,7 +1066,7 @@
             return classes.join(' ');
           },
 
-          proxies: {{ .EndpointsJSON }},
+          proxies: [],
 
           get stats() {
             const online = this.proxies.filter(p => p.status).length;
@@ -1107,8 +1107,10 @@
             });
           },
 
-          init() {
+          async init() {
             const params = new URLSearchParams(window.location.search);
+
+            await this.loadProxies();
 
             // Check for badge mode
             const stableId = params.get('stableId');
@@ -1222,6 +1224,41 @@
             clearInterval(this.countdownInterval);
             this.countdownInterval = null;
             this.countdown = {{ .CheckInterval }};
+          },
+
+          async loadProxies() {
+            try {
+              const endpoint = {{ if .IsPublic }}"./api/v1/public/proxies"{{ else }}"./api/v1/proxies"{{ end }};
+              const res = await fetch(endpoint);
+              const json = await res.json();
+              if (json.success && json.data) {
+                if (Array.isArray(json.data)) {
+                  if (endpoint.includes('public')) {
+                    this.proxies = json.data.map(p => ({
+                      name: p.name,
+                      stableId: p.stableId,
+                      status: !!p.online,
+                      latencyMs: p.latencyMs || 0,
+                      latency: p.latencyMs > 0 ? p.latencyMs + 'ms' : 'n/a',
+                      index: 0
+                    }));
+                  } else {
+                    this.proxies = json.data.map(p => ({
+                      name: p.name,
+                      stableId: p.stableId,
+                      {{ if .ShowServerDetails }}serverInfo: p.server + ':' + p.port, proxyPort: p.proxyPort, {{ end }}
+                      {{ if not .IsPublic }}url: "./config/" + p.stableId, {{ end }}
+                      index: p.index || 0,
+                      status: !!p.online,
+                      latencyMs: p.latencyMs || 0,
+                      latency: p.latencyMs > 0 ? p.latencyMs + 'ms' : 'n/a'
+                    }));
+                  }
+                }
+              }
+            } catch (e) {
+              console.error('Failed to load proxies:', e);
+            }
           },
 
           async refreshData() {

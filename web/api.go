@@ -91,9 +91,9 @@ func toProxyInfo(proxy *models.ProxyConfig, online bool, latency time.Duration, 
 	return ProxyInfo{
 		Index:     proxy.Index,
 		StableID:  proxy.StableID,
-		Name:      proxy.Name,
+		Name:      sanitizeText(proxy.Name),
 		SubName:   proxy.SubName,
-		Server:    proxy.Server,
+		Server:    sanitizeText(proxy.Server),
 		Port:      proxy.Port,
 		Protocol:  proxy.Protocol,
 		ProxyPort: startPort + proxy.Index,
@@ -118,7 +118,7 @@ func APIPublicProxiesHandler(proxyChecker *checker.ProxyChecker) http.HandlerFun
 			status, latency, _ := proxyChecker.GetProxyStatus(proxy.Name)
 			result = append(result, PublicProxyInfo{
 				StableID:  proxy.StableID,
-				Name:      proxy.Name,
+				Name:      sanitizeText(proxy.Name),
 				Online:    status,
 				LatencyMs: latency.Milliseconds(),
 			})
