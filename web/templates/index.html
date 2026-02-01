@@ -1,6 +1,6 @@
 {{ define "index.html" }}
 <!DOCTYPE html>
-<html lang="en" x-data="dashboard()" :class="{ 'light': !darkMode }" x-cloak>
+<html lang="en" x-data="dashboard()" :class="{ 'light': !darkMode }">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -1211,7 +1211,11 @@
 
           stripLeadingEmoji(str) {
             const safe = (str ?? '').toString();
-            return safe.replace(/^[\p{Emoji}\p{Emoji_Modifier}\p{Emoji_Component}\p{Emoji_Modifier_Base}\p{Emoji_Presentation}\u200d\ufe0f\s]+/u, '').trim() || safe;
+            try {
+              return safe.replace(/^[\p{Emoji}\p{Emoji_Modifier}\p{Emoji_Component}\p{Emoji_Modifier_Base}\p{Emoji_Presentation}\u200d\ufe0f\s]+/u, '').trim() || safe;
+            } catch (e) {
+              return safe.trim();
+            }
           },
 
           startCountdown() {
