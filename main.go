@@ -101,6 +101,7 @@ func main() {
 	runCheckIteration := func() {
 		logger.Info("Starting proxy check iteration")
 		proxyChecker.CheckAllProxies()
+		cleanupBadFileConfigs(proxyChecker)
 
 		if config.CLIConfig.Metrics.PushURL != "" {
 			pushConfig, err := metrics.ParseURL(config.CLIConfig.Metrics.PushURL)
@@ -210,6 +211,40 @@ func main() {
 		)
 		if err := http.ListenAndServe(config.CLIConfig.Metrics.Host+":"+config.CLIConfig.Metrics.Port, mux); err != nil {
 			logger.Fatal("Error starting server: %v", err)
+		}
+	}
+}
+
+func cleanupBadFileConfigs(proxyChecker *checker.ProxyChecker) {
+	const badLatencyThreshold = time.Millisecond * 1000
+
+	badByFile := make(map[string]map[string]bool)
+	proxies := proxyChecker.GetProxies()
+	for _, proxy := range proxies {
+		if proxy.SourcePath == "" || proxy.SourceLine == "" {
+			continue
+		}
+
+		status, latency, err := proxyChecker.GetProxyStatus(proxy.Name)
+		isBad := err != nil || !status || latency == 0 || latency > badLatencyThreshold
+		if !isBad {
+			continue
+		}
+
+		if _, ok := badByFile[proxy.SourcePath]; !ok {
+			badByFile[proxy.SourcePath] = make(map[string]bool)
+		}
+		badByFile[proxy.SourcePath][strings.TrimSpace(proxy.SourceLine)] = true
+	}
+
+	for filePath, badLines := range badByFile {
+		removed, kept, err := subscription.RemoveBadConfigsFromFile(filePath, badLines)
+		if err != nil {
+			logger.Warn("Failed to remove bad configs from file %s: %v", filePath, err)
+			continue
+		}
+		if removed > 0 {
+			logger.Warn("Removed %d bad configs from file %s (kept %d)", removed, filePath, kept)
 		}
 	}
 }

@@ -132,6 +132,8 @@ type originalLinkData struct {
 	Path          string
 	Host          string
 	AllowInsecure bool
+	RawLine       string
+	SourcePath    string
 }
 
 type parsedLink struct {
@@ -177,6 +179,7 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 	logger.Debug("Detected source type: %s", sourceType)
 
 	var rawData []byte
+	var sourcePath string
 	var subName string
 	var err error
 
@@ -197,6 +200,7 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 		return &ParseResult{Configs: configs, Name: ""}, nil
 	case "file":
 		filePath := strings.TrimPrefix(subscriptionData, "file://")
+		sourcePath = filePath
 		rawData, err = os.ReadFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read file: %v", err)
@@ -239,7 +243,7 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 		}
 	}
 
-	originalData := p.parseOriginalLinks(rawData)
+	originalData := p.parseOriginalLinks(rawData, sourcePath)
 	cleanedData := p.cleanEmptyLines(rawData)
 	logger.Debug("Cleaned share-link data size: %d bytes", len(cleanedData))
 
@@ -710,7 +714,7 @@ func (p *Parser) isPrintableString(s string) bool {
 	return true
 }
 
-func (p *Parser) parseOriginalLinks(rawData []byte) map[string]*originalLinkData {
+func (p *Parser) parseOriginalLinks(rawData []byte, sourcePath string) map[string]*originalLinkData {
 	result := make(map[string]*originalLinkData)
 
 	decoded := p.tryDecodeBase64(rawData)
@@ -734,6 +738,8 @@ func (p *Parser) parseOriginalLinks(rawData []byte) map[string]*originalLinkData
 				Path:          data.Path,
 				Host:          data.Host,
 				AllowInsecure: data.AllowInsecure,
+				RawLine:       line,
+				SourcePath:    sourcePath,
 			}
 		}
 	}
@@ -1070,6 +1076,12 @@ func (p *Parser) convertOutbound(raw json.RawMessage, index int, originalData ma
 		if orig.AllowInsecure {
 			pc.AllowInsecure = true
 		}
+		if orig.RawLine != "" {
+			pc.SourceLine = orig.RawLine
+		}
+		if orig.SourcePath != "" {
+			pc.SourcePath = orig.SourcePath
+		}
 	}
 
 	if err := pc.Validate(); err != nil {
@@ -1161,7 +1173,7 @@ func (p *Parser) parseFolder(folderPath string) ([]*models.ProxyConfig, error) {
 			continue
 		}
 
-		configs, err := p.parseSingleConfigFile(data, configIndex)
+		configs, err := p.parseSingleConfigFile(data, configIndex, filePath)
 		if err != nil {
 			logger.Warn("Failed to parse file %s: %v", fileName, err)
 			continue
@@ -1184,7 +1196,7 @@ func (p *Parser) parseFolder(folderPath string) ([]*models.ProxyConfig, error) {
 	return allConfigs, nil
 }
 
-func (p *Parser) parseSingleConfigFile(data []byte, startIndex int) ([]*models.ProxyConfig, error) {
+func (p *Parser) parseSingleConfigFile(data []byte, startIndex int, sourcePath string) ([]*models.ProxyConfig, error) {
 	trimmedData := strings.TrimSpace(string(data))
 
 	if strings.HasPrefix(trimmedData, "[") {
@@ -1222,7 +1234,7 @@ func (p *Parser) parseSingleConfigFile(data []byte, startIndex int) ([]*models.P
 		}
 	}
 
-	originalData := p.parseOriginalLinks(data)
+	originalData := p.parseOriginalLinks(data, sourcePath)
 	cleanedData := p.cleanEmptyLines(data)
 	return p.parseShareLinksIndividually(cleanedData, originalData)
 }
