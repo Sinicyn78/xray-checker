@@ -246,6 +246,10 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 	}
 
 	if !response.Success {
+		logger.Warn("libXray parsing failed for bulk data; retrying line-by-line")
+		if proxyConfigs, lineErr := p.parseShareLinksIndividually(cleanedData, originalData); lineErr == nil {
+			return &ParseResult{Configs: proxyConfigs, Name: subName}, nil
+		}
 		return nil, fmt.Errorf("libXray parsing failed. Please check your subscription hosts, check your HWID in your dashboard, or try disabling HWID lock for your checker account")
 	}
 
@@ -273,6 +277,9 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 	}
 
 	if len(proxyConfigs) == 0 {
+		if proxyConfigs, lineErr := p.parseShareLinksIndividually(cleanedData, originalData); lineErr == nil {
+			return &ParseResult{Configs: proxyConfigs, Name: subName}, nil
+		}
 		return nil, fmt.Errorf("no valid proxy configurations found")
 	}
 
@@ -361,14 +368,69 @@ func (p *Parser) cleanEmptyLines(data []byte) []byte {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed != "" {
-			if p.parseShareLink(trimmed) == nil {
-				continue
-			}
-			cleanLines = append(cleanLines, trimmed)
+			cleanLines = append(cleanLines, line)
 		}
 	}
 
 	return []byte(strings.Join(cleanLines, "\n"))
+}
+
+func (p *Parser) parseShareLinksIndividually(data []byte, originalData map[string]*originalLinkData) ([]*models.ProxyConfig, error) {
+	decoded := p.tryDecodeBase64(data)
+	lines := strings.Split(string(decoded), "\n")
+
+	var proxyConfigs []*models.ProxyConfig
+	configIndex := 0
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		if !p.isSupportedShareLink(trimmed) {
+			continue
+		}
+
+		base64Data := base64.StdEncoding.EncodeToString([]byte(trimmed))
+		resultBase64 := libXray.ConvertShareLinksToXrayJson(base64Data)
+		resultBytes, err := base64.StdEncoding.DecodeString(resultBase64)
+		if err != nil {
+			continue
+		}
+
+		var response libXrayResponse
+		if err := json.Unmarshal(resultBytes, &response); err != nil {
+			continue
+		}
+		if !response.Success {
+			continue
+		}
+
+		var xrayConfig struct {
+			Outbounds []json.RawMessage `json:"outbounds"`
+		}
+		if err := json.Unmarshal(response.Data, &xrayConfig); err != nil {
+			continue
+		}
+
+		for _, outboundRaw := range xrayConfig.Outbounds {
+			proxyConfig, err := p.convertOutbound(outboundRaw, configIndex, originalData)
+			if err != nil {
+				continue
+			}
+			if proxyConfig != nil {
+				proxyConfigs = append(proxyConfigs, proxyConfig)
+				configIndex++
+			}
+		}
+	}
+
+	if len(proxyConfigs) == 0 {
+		return nil, fmt.Errorf("no valid proxy configurations found")
+	}
+
+	return proxyConfigs, nil
 }
 
 func (p *Parser) detectSourceType(source string) string {
@@ -513,13 +575,30 @@ func (p *Parser) parseShareLink(link string) *parsedLink {
 		return nil
 	}
 
+	if !p.isSupportedShareLinkScheme(u.Scheme) {
+		return nil
+	}
+
 	result := &parsedLink{
 		Name: u.Fragment,
 	}
 
 	host := u.Hostname()
 	portStr := u.Port()
-	if portStr == "" {
+	if u.Scheme == "ss" && (host == "" || portStr == "") {
+		decoded := p.decodeSSPayload(link)
+		if decoded == "" {
+			return nil
+		}
+		decodedURL, err := url.Parse("ss://" + decoded)
+		if err != nil {
+			return nil
+		}
+		host = decodedURL.Hostname()
+		portStr = decodedURL.Port()
+	}
+
+	if portStr == "" || host == "" {
 		return nil
 	}
 	port, err := strconv.Atoi(portStr)
@@ -537,6 +616,47 @@ func (p *Parser) parseShareLink(link string) *parsedLink {
 	result.AllowInsecure = query.Get("allowInsecure") == "1" || query.Get("allowInsecure") == "true"
 
 	return result
+}
+
+func (p *Parser) isSupportedShareLink(link string) bool {
+	return strings.HasPrefix(link, "vless://") ||
+		strings.HasPrefix(link, "vmess://") ||
+		strings.HasPrefix(link, "trojan://") ||
+		strings.HasPrefix(link, "ss://")
+}
+
+func (p *Parser) isSupportedShareLinkScheme(scheme string) bool {
+	return scheme == "vless" || scheme == "vmess" || scheme == "trojan" || scheme == "ss"
+}
+
+func (p *Parser) decodeSSPayload(link string) string {
+	payload := strings.TrimPrefix(link, "ss://")
+	if payload == link {
+		return ""
+	}
+
+	if idx := strings.Index(payload, "#"); idx != -1 {
+		payload = payload[:idx]
+	}
+	if idx := strings.Index(payload, "?"); idx != -1 {
+		payload = payload[:idx]
+	}
+
+	if payload == "" {
+		return ""
+	}
+
+	decoded, err := p.decodeBase64(payload)
+	if err != nil {
+		return ""
+	}
+
+	decodedStr := strings.TrimSpace(string(decoded))
+	if decodedStr == "" {
+		return ""
+	}
+
+	return decodedStr
 }
 
 func (p *Parser) parseVMessLink(link string) *parsedLink {

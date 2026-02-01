@@ -856,7 +856,7 @@
         x-show="showProxies"
         class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 mb-4"
       >
-        <template x-for="(proxy, idx) in filteredProxies" :key="proxy.name">
+        <template x-for="(proxy, idx) in filteredProxies" :key="proxy.stableId || proxy.name || idx">
           <div
             class="proxy-card group card rounded-lg px-3 py-2.5 flex items-center gap-3 transition-all duration-150"
             :class="initialLoad && 'animate'"
@@ -1065,11 +1065,7 @@
             return classes.join(' ');
           },
 
-          proxies: [
-            {{ range $.Endpoints }}
-            { name: "{{.Name}}", stableId: "{{.StableID}}", {{ if $.ShowServerDetails }}serverInfo: "{{.ServerInfo}}", proxyPort: {{.ProxyPort}}, {{ end }}{{ if not $.IsPublic }}url: "{{.URL}}", {{ end }}index: {{.Index}}, status: {{.Status}}, latency: "{{ formatLatency .Latency }}", latencyMs: {{ .Latency.Milliseconds }} },
-            {{ end }}
-          ],
+          proxies: {{ .EndpointsJSON }},
 
           get stats() {
             const online = this.proxies.filter(p => p.status).length;
@@ -1086,7 +1082,7 @@
             let r = this.proxies;
             if (this.search) {
               const q = this.search.toLowerCase();
-              r = r.filter(p => p.name.toLowerCase().includes(q) || (p.serverInfo && p.serverInfo.toLowerCase().includes(q)));
+              r = r.filter(p => (p.name || '').toString().toLowerCase().includes(q) || (p.serverInfo && p.serverInfo.toLowerCase().includes(q)));
             }
             if (this.filter === 'online') r = r.filter(p => p.status);
             else if (this.filter === 'offline') r = r.filter(p => !p.status);
@@ -1210,7 +1206,8 @@
           },
 
           stripLeadingEmoji(str) {
-            return str.replace(/^[\p{Emoji}\p{Emoji_Modifier}\p{Emoji_Component}\p{Emoji_Modifier_Base}\p{Emoji_Presentation}\u200d\ufe0f\s]+/u, '').trim() || str;
+            const safe = (str ?? '').toString();
+            return safe.replace(/^[\p{Emoji}\p{Emoji_Modifier}\p{Emoji_Component}\p{Emoji_Modifier_Base}\p{Emoji_Presentation}\u200d\ufe0f\s]+/u, '').trim() || safe;
           },
 
           startCountdown() {
@@ -1232,7 +1229,7 @@
               const json = await res.json();
               if (json.success && json.data) {
                 json.data.forEach(updated => {
-                  const proxy = this.proxies.find(p => p.name === updated.name);
+                  const proxy = this.proxies.find(p => p.stableId === updated.stableId) || this.proxies.find(p => p.name === updated.name);
                   if (proxy) {
                     proxy.status = updated.online;
                     proxy.latencyMs = updated.latencyMs;
