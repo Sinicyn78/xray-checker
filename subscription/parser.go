@@ -213,18 +213,20 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 		logger.Debug("Detected JSON array format")
 		configs, jsonErr := p.parseJSONConfigs(rawData)
 		if jsonErr != nil {
-			return nil, jsonErr
+			logger.Warn("Failed to parse JSON array, falling back to share links: %v", jsonErr)
+		} else {
+			return &ParseResult{Configs: configs, Name: subName}, nil
 		}
-		return &ParseResult{Configs: configs, Name: subName}, nil
 	}
 
 	if strings.HasPrefix(trimmedData, "{") {
 		logger.Debug("Detected single JSON object format")
 		configs, jsonErr := p.parseSingleJSONConfig(rawData)
 		if jsonErr != nil {
-			return nil, jsonErr
+			logger.Warn("Failed to parse JSON object, falling back to share links: %v", jsonErr)
+		} else {
+			return &ParseResult{Configs: configs, Name: subName}, nil
 		}
-		return &ParseResult{Configs: configs, Name: subName}, nil
 	}
 
 	originalData := p.parseOriginalLinks(rawData)
@@ -365,11 +367,17 @@ func (p *Parser) cleanEmptyLines(data []byte) []byte {
 
 	lines := strings.Split(string(decoded), "\n")
 	var cleanLines []string
+	bom := string([]byte{0xEF, 0xBB, 0xBF})
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			cleanLines = append(cleanLines, line)
+		trimmed = strings.TrimPrefix(trimmed, bom)
+		if trimmed == "" {
+			continue
 		}
+		if !p.isSupportedShareLink(trimmed) {
+			continue
+		}
+		cleanLines = append(cleanLines, trimmed)
 	}
 
 	return []byte(strings.Join(cleanLines, "\n"))
@@ -542,8 +550,10 @@ func (p *Parser) parseOriginalLinks(rawData []byte) map[string]*originalLinkData
 	decoded := p.tryDecodeBase64(rawData)
 
 	lines := strings.Split(string(decoded), "\n")
+	bom := string([]byte{0xEF, 0xBB, 0xBF})
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, bom)
 		if line == "" {
 			continue
 		}
@@ -1012,7 +1022,9 @@ func (p *Parser) parseSingleConfigFile(data []byte, startIndex int) ([]*models.P
 	trimmedData := strings.TrimSpace(string(data))
 
 	if strings.HasPrefix(trimmedData, "[") {
-		return p.parseJSONConfigs(data)
+		if configs, err := p.parseJSONConfigs(data); err == nil {
+			return configs, nil
+		}
 	}
 
 	if strings.HasPrefix(trimmedData, "{") {
@@ -1021,30 +1033,30 @@ func (p *Parser) parseSingleConfigFile(data []byte, startIndex int) ([]*models.P
 			Outbounds []json.RawMessage `json:"outbounds"`
 		}
 
-		if err := json.Unmarshal(data, &config); err != nil {
-			return nil, fmt.Errorf("failed to parse JSON config: %v", err)
-		}
-
-		var proxyConfigs []*models.ProxyConfig
-		for _, outboundRaw := range config.Outbounds {
-			proxyConfig, err := p.convertOutbound(outboundRaw, startIndex, nil)
-			if err != nil {
-				continue
-			}
-			if proxyConfig != nil {
-				if config.Remarks != "" {
-					proxyConfig.Name = config.Remarks
+		if err := json.Unmarshal(data, &config); err == nil {
+			var proxyConfigs []*models.ProxyConfig
+			for _, outboundRaw := range config.Outbounds {
+				proxyConfig, err := p.convertOutbound(outboundRaw, startIndex, nil)
+				if err != nil {
+					continue
 				}
-				proxyConfigs = append(proxyConfigs, proxyConfig)
+				if proxyConfig != nil {
+					if config.Remarks != "" {
+						proxyConfig.Name = config.Remarks
+					}
+					proxyConfigs = append(proxyConfigs, proxyConfig)
+				}
 			}
-		}
 
-		if len(proxyConfigs) == 0 {
-			return nil, fmt.Errorf("no valid proxy configurations found")
-		}
+			if len(proxyConfigs) == 0 {
+				return nil, fmt.Errorf("no valid proxy configurations found")
+			}
 
-		return proxyConfigs, nil
+			return proxyConfigs, nil
+		}
 	}
 
-	return nil, fmt.Errorf("unsupported config format")
+	originalData := p.parseOriginalLinks(data)
+	cleanedData := p.cleanEmptyLines(data)
+	return p.parseShareLinksIndividually(cleanedData, originalData)
 }
