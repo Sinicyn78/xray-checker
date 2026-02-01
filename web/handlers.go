@@ -119,7 +119,7 @@ func buildEndpointsJSON(endpoints []EndpointInfo, showServerDetails bool, isPubl
 			latency = fmt.Sprintf("%dms", ep.Latency.Milliseconds())
 		}
 		item := endpointView{
-			Name:      ep.Name,
+			Name:      sanitizeProxyName(ep.Name),
 			StableID:  ep.StableID,
 			Status:    ep.Status,
 			Latency:   latency,
@@ -207,11 +207,12 @@ func RegisterConfigEndpoints(proxies []*models.ProxyConfig, proxyChecker *checke
 		}
 
 		endpoint := fmt.Sprintf("./config/%s", proxy.StableID)
+		displayName := sanitizeProxyName(proxy.Name)
 
 		status, latency, _ := proxyChecker.GetProxyStatus(proxy.Name)
 
 		endpoints = append(endpoints, EndpointInfo{
-			Name:       proxy.Name,
+			Name:       displayName,
 			ServerInfo: fmt.Sprintf("%s:%d", proxy.Server, proxy.Port),
 			URL:        endpoint,
 			ProxyPort:  startPort + proxy.Index,
@@ -225,6 +226,34 @@ func RegisterConfigEndpoints(proxies []*models.ProxyConfig, proxyChecker *checke
 	endpointsMu.Lock()
 	registeredEndpoints = endpoints
 	endpointsMu.Unlock()
+}
+
+func sanitizeProxyName(name string) string {
+	if name == "" {
+		return ""
+	}
+
+	// Strip control chars that can break parsing or JS in custom templates.
+	name = strings.Map(func(r rune) rune {
+		if r < 32 {
+			return -1
+		}
+		return r
+	}, name)
+
+	name = strings.ReplaceAll(name, "\\", " ")
+	name = strings.ReplaceAll(name, "\"", " ")
+	name = strings.ReplaceAll(name, "'", " ")
+	name = strings.ReplaceAll(name, "\t", " ")
+	name = strings.ReplaceAll(name, "\r", " ")
+	name = strings.ReplaceAll(name, "\n", " ")
+	name = strings.TrimSpace(name)
+
+	for strings.Contains(name, "  ") {
+		name = strings.ReplaceAll(name, "  ", " ")
+	}
+
+	return name
 }
 
 type PrefixServeMux struct {
