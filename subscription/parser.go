@@ -201,6 +201,15 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to read file: %v", err)
 		}
+		if removed, kept, cleanErr := p.removeInvalidConfigsFromFile(filePath, rawData); cleanErr != nil {
+			logger.Warn("Failed to clean invalid configs from file %s: %v", filePath, cleanErr)
+		} else if removed > 0 {
+			logger.Warn("Removed %d invalid configs from file %s (kept %d), reloading", removed, filePath, kept)
+			rawData, err = os.ReadFile(filePath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read file after cleanup: %v", err)
+			}
+		}
 	case "base64":
 		rawData = []byte(strings.TrimPrefix(subscriptionData, "base64://"))
 		rawData = []byte(strings.TrimPrefix(string(rawData), "data:text/plain;base64,"))
@@ -520,6 +529,82 @@ func (p *Parser) parseShareLinksIndividually(data []byte, originalData map[strin
 
 	logger.Debug("Line-by-line parsed proxy configs: %d (skipped lines: %d)", len(proxyConfigs), skipped)
 	return proxyConfigs, nil
+}
+
+func (p *Parser) removeInvalidConfigsFromFile(filePath string, rawData []byte) (int, int, error) {
+	trimmed := strings.TrimSpace(string(rawData))
+	if trimmed == "" {
+		return 0, 0, nil
+	}
+
+	if strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "{") {
+		// JSON configs are handled elsewhere; don't mutate the file.
+		return 0, 0, nil
+	}
+
+	cleaned := p.cleanEmptyLines(rawData)
+	if len(cleaned) == 0 {
+		return 0, 0, nil
+	}
+
+	filtered, ok := p.filterValidShareLinks(cleaned)
+	if !ok || len(filtered) == 0 {
+		return 0, 0, fmt.Errorf("no valid share links found during cleanup")
+	}
+
+	originalDecoded := p.tryDecodeBase64(rawData)
+	isBase64 := p.isLikelyBase64Subscription(rawData, originalDecoded)
+
+	validLines := strings.Split(strings.TrimSpace(string(filtered)), "\n")
+	validCount := 0
+	for _, line := range validLines {
+		if strings.TrimSpace(line) != "" {
+			validCount++
+		}
+	}
+
+	decodedLines := strings.Split(strings.TrimSpace(string(originalDecoded)), "\n")
+	originalCount := 0
+	for _, line := range decodedLines {
+		if strings.TrimSpace(line) != "" {
+			originalCount++
+		}
+	}
+
+	removed := originalCount - validCount
+	if removed <= 0 {
+		return 0, validCount, nil
+	}
+
+	var toWrite []byte
+	if isBase64 {
+		toWrite = []byte(base64.StdEncoding.EncodeToString(filtered))
+	} else {
+		toWrite = filtered
+	}
+
+	if err := os.WriteFile(filePath, toWrite, 0o644); err != nil {
+		return 0, validCount, err
+	}
+
+	return removed, validCount, nil
+}
+
+func (p *Parser) isLikelyBase64Subscription(rawData []byte, decoded []byte) bool {
+	text := strings.TrimSpace(string(rawData))
+	if strings.HasPrefix(text, "vless://") || strings.HasPrefix(text, "vmess://") ||
+		strings.HasPrefix(text, "trojan://") || strings.HasPrefix(text, "ss://") {
+		return false
+	}
+	if strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
+		return false
+	}
+
+	decodedText := strings.TrimSpace(string(decoded))
+	return strings.HasPrefix(decodedText, "vless://") ||
+		strings.HasPrefix(decodedText, "vmess://") ||
+		strings.HasPrefix(decodedText, "trojan://") ||
+		strings.HasPrefix(decodedText, "ss://")
 }
 
 func (p *Parser) detectSourceType(source string) string {
