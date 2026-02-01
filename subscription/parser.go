@@ -361,7 +361,10 @@ func (p *Parser) cleanEmptyLines(data []byte) []byte {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed != "" {
-			cleanLines = append(cleanLines, line)
+			if p.parseShareLink(trimmed) == nil {
+				continue
+			}
+			cleanLines = append(cleanLines, trimmed)
 		}
 	}
 
