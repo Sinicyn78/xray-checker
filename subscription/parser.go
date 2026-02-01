@@ -230,13 +230,30 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 	}
 
 	originalData := p.parseOriginalLinks(rawData)
-
 	cleanedData := p.cleanEmptyLines(rawData)
 
+	if cfgs, err := p.parseShareLinksBulk(cleanedData, originalData, subName); err == nil {
+		return cfgs, nil
+	}
+
+	logger.Warn("Bulk parsing failed; retrying after filtering invalid configs")
+	if cleaned, filtered := p.filterValidShareLinks(cleanedData); filtered {
+		if cfgs, retryErr := p.parseShareLinksBulk(cleaned, originalData, subName); retryErr == nil {
+			return cfgs, nil
+		}
+	}
+
+	logger.Warn("Bulk retry failed; falling back to line-by-line")
+	if proxyConfigs, lineErr := p.parseShareLinksIndividually(cleanedData, originalData); lineErr == nil {
+		return &ParseResult{Configs: proxyConfigs, Name: subName}, nil
+	}
+
+	return nil, fmt.Errorf("no valid proxy configurations found")
+}
+
+func (p *Parser) parseShareLinksBulk(cleanedData []byte, originalData map[string]*originalLinkData, subName string) (*ParseResult, error) {
 	base64Data := base64.StdEncoding.EncodeToString(cleanedData)
-
 	resultBase64 := libXray.ConvertShareLinksToXrayJson(base64Data)
-
 	resultBytes, err := base64.StdEncoding.DecodeString(resultBase64)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode libXray response: %v", err)
@@ -248,11 +265,7 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 	}
 
 	if !response.Success {
-		logger.Warn("libXray parsing failed for bulk data; retrying line-by-line")
-		if proxyConfigs, lineErr := p.parseShareLinksIndividually(cleanedData, originalData); lineErr == nil {
-			return &ParseResult{Configs: proxyConfigs, Name: subName}, nil
-		}
-		return nil, fmt.Errorf("libXray parsing failed. Please check your subscription hosts, check your HWID in your dashboard, or try disabling HWID lock for your checker account")
+		return nil, fmt.Errorf("libXray parsing failed")
 	}
 
 	var xrayConfig struct {
@@ -279,13 +292,47 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 	}
 
 	if len(proxyConfigs) == 0 {
-		if proxyConfigs, lineErr := p.parseShareLinksIndividually(cleanedData, originalData); lineErr == nil {
-			return &ParseResult{Configs: proxyConfigs, Name: subName}, nil
-		}
 		return nil, fmt.Errorf("no valid proxy configurations found")
 	}
 
 	return &ParseResult{Configs: proxyConfigs, Name: subName}, nil
+}
+
+func (p *Parser) filterValidShareLinks(data []byte) ([]byte, bool) {
+	decoded := p.tryDecodeBase64(data)
+	lines := strings.Split(string(decoded), "\n")
+
+	var valid []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if !p.isSupportedShareLink(trimmed) {
+			continue
+		}
+
+		base64Data := base64.StdEncoding.EncodeToString([]byte(trimmed))
+		resultBase64 := libXray.ConvertShareLinksToXrayJson(base64Data)
+		resultBytes, err := base64.StdEncoding.DecodeString(resultBase64)
+		if err != nil {
+			continue
+		}
+		var response libXrayResponse
+		if err := json.Unmarshal(resultBytes, &response); err != nil {
+			continue
+		}
+		if !response.Success {
+			continue
+		}
+		valid = append(valid, trimmed)
+	}
+
+	if len(valid) == 0 {
+		return nil, false
+	}
+
+	return []byte(strings.Join(valid, "\n")), true
 }
 
 func (p *Parser) parseJSONConfigs(data []byte) ([]*models.ProxyConfig, error) {
