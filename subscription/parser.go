@@ -368,10 +368,7 @@ func (p *Parser) cleanEmptyLines(data []byte) []byte {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed != "" {
-			if !p.isSupportedShareLink(trimmed) {
-				continue
-			}
-			cleanLines = append(cleanLines, trimmed)
+			cleanLines = append(cleanLines, line)
 		}
 	}
 
@@ -919,10 +916,35 @@ func (p *Parser) tryDecodeBase64(data []byte) []byte {
 
 	decoded, err := p.decodeBase64(text)
 	if err != nil {
+		sanitized := p.sanitizeBase64(text)
+		if sanitized != "" && sanitized != text {
+			if decodedSanitized, errSanitized := p.decodeBase64(sanitized); errSanitized == nil {
+				return decodedSanitized
+			}
+		}
 		return data
 	}
 
 	return decoded
+}
+
+func (p *Parser) sanitizeBase64(text string) string {
+	if text == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	b.Grow(len(text))
+	for _, r := range text {
+		if (r >= 'A' && r <= 'Z') ||
+			(r >= 'a' && r <= 'z') ||
+			(r >= '0' && r <= '9') ||
+			r == '+' || r == '/' || r == '=' ||
+			r == '-' || r == '_' {
+			b.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func (p *Parser) decodeBase64(text string) ([]byte, error) {
