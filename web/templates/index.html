@@ -1066,7 +1066,7 @@
             return classes.join(' ');
           },
 
-          proxies: [],
+          proxies: {{ .EndpointsJSON }},
 
           get stats() {
             const online = this.proxies.filter(p => p.status).length;
@@ -1228,32 +1228,34 @@
 
           async loadProxies() {
             try {
-              const endpoint = {{ if .IsPublic }}"./api/v1/public/proxies"{{ else }}"./api/v1/proxies"{{ end }};
-              const res = await fetch(endpoint);
+              const primary = {{ if .IsPublic }}"./api/v1/public/proxies"{{ else }}"./api/v1/proxies"{{ end }};
+              let res = await fetch(primary);
+              if (!res.ok && (res.status === 401 || res.status === 403)) {
+                res = await fetch("./api/v1/public/proxies");
+              }
+
               const json = await res.json();
-              if (json.success && json.data) {
-                if (Array.isArray(json.data)) {
-                  if (endpoint.includes('public')) {
-                    this.proxies = json.data.map(p => ({
-                      name: p.name,
-                      stableId: p.stableId,
-                      status: !!p.online,
-                      latencyMs: p.latencyMs || 0,
-                      latency: p.latencyMs > 0 ? p.latencyMs + 'ms' : 'n/a',
-                      index: 0
-                    }));
-                  } else {
-                    this.proxies = json.data.map(p => ({
-                      name: p.name,
-                      stableId: p.stableId,
-                      {{ if .ShowServerDetails }}serverInfo: p.server + ':' + p.port, proxyPort: p.proxyPort, {{ end }}
-                      {{ if not .IsPublic }}url: "./config/" + p.stableId, {{ end }}
-                      index: p.index || 0,
-                      status: !!p.online,
-                      latencyMs: p.latencyMs || 0,
-                      latency: p.latencyMs > 0 ? p.latencyMs + 'ms' : 'n/a'
-                    }));
-                  }
+              if (json.success && Array.isArray(json.data)) {
+                if (primary.includes('public') || res.url.includes('/public/')) {
+                  this.proxies = json.data.map(p => ({
+                    name: p.name,
+                    stableId: p.stableId,
+                    status: !!p.online,
+                    latencyMs: p.latencyMs || 0,
+                    latency: p.latencyMs > 0 ? p.latencyMs + 'ms' : 'n/a',
+                    index: 0
+                  }));
+                } else {
+                  this.proxies = json.data.map(p => ({
+                    name: p.name,
+                    stableId: p.stableId,
+                    {{ if .ShowServerDetails }}serverInfo: p.server + ':' + p.port, proxyPort: p.proxyPort, {{ end }}
+                    {{ if not .IsPublic }}url: "./config/" + p.stableId, {{ end }}
+                    index: p.index || 0,
+                    status: !!p.online,
+                    latencyMs: p.latencyMs || 0,
+                    latency: p.latencyMs > 0 ? p.latencyMs + 'ms' : 'n/a'
+                  }));
                 }
               }
             } catch (e) {
