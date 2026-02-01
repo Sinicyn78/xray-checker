@@ -9,6 +9,7 @@ import (
 	"time"
 	"xray-checker/checker"
 	"xray-checker/config"
+	"xray-checker/logger"
 	"xray-checker/models"
 )
 
@@ -112,6 +113,7 @@ func toProxyInfo(proxy *models.ProxyConfig, online bool, latency time.Duration, 
 func APIPublicProxiesHandler(proxyChecker *checker.ProxyChecker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		proxies := proxyChecker.GetProxies()
+		logger.Debug("API public proxies requested: %d", len(proxies))
 		result := make([]PublicProxyInfo, 0, len(proxies))
 
 		for _, proxy := range proxies {
@@ -138,6 +140,7 @@ func APIPublicProxiesHandler(proxyChecker *checker.ProxyChecker) http.HandlerFun
 func APIProxiesHandler(proxyChecker *checker.ProxyChecker, startPort int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		proxies := proxyChecker.GetProxies()
+		logger.Debug("API proxies requested: %d", len(proxies))
 		result := make([]ProxyInfo, 0, len(proxies))
 
 		for _, proxy := range proxies {

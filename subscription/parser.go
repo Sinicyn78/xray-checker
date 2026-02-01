@@ -209,6 +209,7 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 	}
 
 	trimmedData := strings.TrimSpace(string(rawData))
+	logger.Debug("Raw data size: %d bytes", len(rawData))
 	if strings.HasPrefix(trimmedData, "[") {
 		logger.Debug("Detected JSON array format")
 		configs, jsonErr := p.parseJSONConfigs(rawData)
@@ -231,6 +232,7 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 
 	originalData := p.parseOriginalLinks(rawData)
 	cleanedData := p.cleanEmptyLines(rawData)
+	logger.Debug("Cleaned share-link data size: %d bytes", len(cleanedData))
 
 	if cfgs, err := p.parseShareLinksBulk(cleanedData, originalData, subName); err == nil {
 		return cfgs, nil
@@ -295,6 +297,7 @@ func (p *Parser) parseShareLinksBulk(cleanedData []byte, originalData map[string
 		return nil, fmt.Errorf("no valid proxy configurations found")
 	}
 
+	logger.Debug("Bulk parsed proxy configs: %d", len(proxyConfigs))
 	return &ParseResult{Configs: proxyConfigs, Name: subName}, nil
 }
 
@@ -303,12 +306,14 @@ func (p *Parser) filterValidShareLinks(data []byte) ([]byte, bool) {
 	lines := strings.Split(string(decoded), "\n")
 
 	var valid []string
+	var invalid []string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
 		if !p.isSupportedShareLink(trimmed) {
+			invalid = append(invalid, trimmed)
 			continue
 		}
 
@@ -316,16 +321,28 @@ func (p *Parser) filterValidShareLinks(data []byte) ([]byte, bool) {
 		resultBase64 := libXray.ConvertShareLinksToXrayJson(base64Data)
 		resultBytes, err := base64.StdEncoding.DecodeString(resultBase64)
 		if err != nil {
+			invalid = append(invalid, trimmed)
 			continue
 		}
 		var response libXrayResponse
 		if err := json.Unmarshal(resultBytes, &response); err != nil {
+			invalid = append(invalid, trimmed)
 			continue
 		}
 		if !response.Success {
+			invalid = append(invalid, trimmed)
 			continue
 		}
 		valid = append(valid, trimmed)
+	}
+
+	if len(invalid) > 0 {
+		logger.Warn("Filtered invalid share links: %d (valid: %d)", len(invalid), len(valid))
+		for i := 0; i < len(invalid) && i < 3; i++ {
+			logger.Warn("Invalid share link sample %d: %s", i+1, truncateLogValue(invalid[i], 200))
+		}
+	} else {
+		logger.Debug("No invalid share links found; valid: %d", len(valid))
 	}
 
 	if len(valid) == 0 {
@@ -333,6 +350,16 @@ func (p *Parser) filterValidShareLinks(data []byte) ([]byte, bool) {
 	}
 
 	return []byte(strings.Join(valid, "\n")), true
+}
+
+func truncateLogValue(value string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if len(value) <= max {
+		return value
+	}
+	return value[:max] + "…"
 }
 
 func (p *Parser) parseJSONConfigs(data []byte) ([]*models.ProxyConfig, error) {
@@ -436,6 +463,7 @@ func (p *Parser) parseShareLinksIndividually(data []byte, originalData map[strin
 
 	var proxyConfigs []*models.ProxyConfig
 	configIndex := 0
+	skipped := 0
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -444,6 +472,7 @@ func (p *Parser) parseShareLinksIndividually(data []byte, originalData map[strin
 		}
 
 		if !p.isSupportedShareLink(trimmed) {
+			skipped++
 			continue
 		}
 
@@ -451,14 +480,17 @@ func (p *Parser) parseShareLinksIndividually(data []byte, originalData map[strin
 		resultBase64 := libXray.ConvertShareLinksToXrayJson(base64Data)
 		resultBytes, err := base64.StdEncoding.DecodeString(resultBase64)
 		if err != nil {
+			skipped++
 			continue
 		}
 
 		var response libXrayResponse
 		if err := json.Unmarshal(resultBytes, &response); err != nil {
+			skipped++
 			continue
 		}
 		if !response.Success {
+			skipped++
 			continue
 		}
 
@@ -466,6 +498,7 @@ func (p *Parser) parseShareLinksIndividually(data []byte, originalData map[strin
 			Outbounds []json.RawMessage `json:"outbounds"`
 		}
 		if err := json.Unmarshal(response.Data, &xrayConfig); err != nil {
+			skipped++
 			continue
 		}
 
@@ -485,6 +518,7 @@ func (p *Parser) parseShareLinksIndividually(data []byte, originalData map[strin
 		return nil, fmt.Errorf("no valid proxy configurations found")
 	}
 
+	logger.Debug("Line-by-line parsed proxy configs: %d (skipped lines: %d)", len(proxyConfigs), skipped)
 	return proxyConfigs, nil
 }
 
