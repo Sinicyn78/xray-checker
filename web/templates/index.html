@@ -917,7 +917,7 @@
             <!-- Copy Config -->
             <button
               @click="copyConfig(proxy)"
-              class="hidden sm:block p-1.5 rounded text-muted btn-icon transition-all"
+              class="p-1.5 rounded text-muted btn-icon transition-all"
               title="Copy Config"
             >
               <svg
@@ -1005,7 +1005,7 @@
           >
         </div>
         {{ end }}
-        <div class="mt-2">Version: {{.Version}}</div>
+        <div class="mt-2">Version: {{.Version}} · Patch: 2026-02-01-1</div>
       </footer>
     </div>
 
@@ -1348,9 +1348,24 @@
             latency.className = 'text-xs tabular-nums ' + (p.latencyMs === 0 ? 'text-muted' : p.latencyMs < 500 ? 'latency-good' : p.latencyMs < 1000 ? 'latency-medium' : 'latency-bad');
             latency.textContent = p.latency || 'n/a';
 
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'p-1.5 rounded text-muted btn-icon transition-all';
+            copyBtn.title = 'Copy Config';
+            copyBtn.textContent = '⧉';
+            copyBtn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              if (!p.config) return;
+              try { await navigator.clipboard.writeText(p.config); }
+              catch {
+                const t = Object.assign(document.createElement('textarea'), {value: p.config, style: 'position:fixed;opacity:0'});
+                document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove();
+              }
+            });
+
             card.appendChild(statusWrap);
             card.appendChild(info);
             card.appendChild(latency);
+            if (p.config) card.appendChild(copyBtn);
             frag.appendChild(card);
           }
 
