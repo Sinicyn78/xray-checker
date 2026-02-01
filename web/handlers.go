@@ -119,7 +119,7 @@ func buildEndpointsJSON(endpoints []EndpointInfo, showServerDetails bool, isPubl
 			latency = fmt.Sprintf("%dms", ep.Latency.Milliseconds())
 		}
 		item := endpointView{
-			Name:      sanitizeProxyName(ep.Name),
+			Name:      sanitizeText(ep.Name),
 			StableID:  ep.StableID,
 			Status:    ep.Status,
 			Latency:   latency,
@@ -130,7 +130,7 @@ func buildEndpointsJSON(endpoints []EndpointInfo, showServerDetails bool, isPubl
 			item.URL = ep.URL
 		}
 		if showServerDetails {
-			item.ServerInfo = ep.ServerInfo
+			item.ServerInfo = sanitizeText(ep.ServerInfo)
 			item.ProxyPort = ep.ProxyPort
 		}
 		view = append(view, item)
@@ -207,13 +207,13 @@ func RegisterConfigEndpoints(proxies []*models.ProxyConfig, proxyChecker *checke
 		}
 
 		endpoint := fmt.Sprintf("./config/%s", proxy.StableID)
-		displayName := sanitizeProxyName(proxy.Name)
+		displayName := sanitizeText(proxy.Name)
 
 		status, latency, _ := proxyChecker.GetProxyStatus(proxy.Name)
 
 		endpoints = append(endpoints, EndpointInfo{
 			Name:       displayName,
-			ServerInfo: fmt.Sprintf("%s:%d", proxy.Server, proxy.Port),
+			ServerInfo: sanitizeText(fmt.Sprintf("%s:%d", proxy.Server, proxy.Port)),
 			URL:        endpoint,
 			ProxyPort:  startPort + proxy.Index,
 			Index:      proxy.Index,
@@ -228,32 +228,33 @@ func RegisterConfigEndpoints(proxies []*models.ProxyConfig, proxyChecker *checke
 	endpointsMu.Unlock()
 }
 
-func sanitizeProxyName(name string) string {
-	if name == "" {
+func sanitizeText(value string) string {
+	if value == "" {
 		return ""
 	}
 
-	// Strip control chars that can break parsing or JS in custom templates.
-	name = strings.Map(func(r rune) rune {
+	// Ensure valid UTF-8 and strip control chars that can break parsing or JS in templates.
+	value = strings.ToValidUTF8(value, "")
+	value = strings.Map(func(r rune) rune {
 		if r < 32 {
 			return -1
 		}
 		return r
-	}, name)
+	}, value)
 
-	name = strings.ReplaceAll(name, "\\", " ")
-	name = strings.ReplaceAll(name, "\"", " ")
-	name = strings.ReplaceAll(name, "'", " ")
-	name = strings.ReplaceAll(name, "\t", " ")
-	name = strings.ReplaceAll(name, "\r", " ")
-	name = strings.ReplaceAll(name, "\n", " ")
-	name = strings.TrimSpace(name)
+	value = strings.ReplaceAll(value, "\\", " ")
+	value = strings.ReplaceAll(value, "\"", " ")
+	value = strings.ReplaceAll(value, "'", " ")
+	value = strings.ReplaceAll(value, "\t", " ")
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	value = strings.TrimSpace(value)
 
-	for strings.Contains(name, "  ") {
-		name = strings.ReplaceAll(name, "  ", " ")
+	for strings.Contains(value, "  ") {
+		value = strings.ReplaceAll(value, "  ", " ")
 	}
 
-	return name
+	return value
 }
 
 type PrefixServeMux struct {
