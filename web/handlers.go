@@ -1,7 +1,9 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"strings"
 	"sync"
@@ -63,6 +65,8 @@ func IndexHandler(version string, proxyChecker *checker.ProxyChecker) http.Handl
 			}
 		}
 
+		endpointsJSON := buildEndpointsJSON(endpoints, showServerDetails, isPublic)
+
 		data := PageData{
 			Version:                    version,
 			Host:                       config.CLIConfig.Metrics.Host,
@@ -80,6 +84,7 @@ func IndexHandler(version string, proxyChecker *checker.ProxyChecker) http.Handl
 			Instance:                   config.CLIConfig.Metrics.Instance,
 			PushUrl:                    metrics.GetPushURL(config.CLIConfig.Metrics.PushURL),
 			Endpoints:                  endpoints,
+			EndpointsJSON:              endpointsJSON,
 			ShowServerDetails:          showServerDetails,
 			IsPublic:                   isPublic,
 			SubscriptionName:           subscription.GetSubscriptionName(),
@@ -92,6 +97,50 @@ func IndexHandler(version string, proxyChecker *checker.ProxyChecker) http.Handl
 			return
 		}
 	}
+}
+
+type endpointView struct {
+	Name       string `json:"name"`
+	StableID   string `json:"stableId"`
+	Status     bool   `json:"status"`
+	Latency    string `json:"latency"`
+	LatencyMs  int64  `json:"latencyMs"`
+	Index      int    `json:"index"`
+	URL        string `json:"url,omitempty"`
+	ServerInfo string `json:"serverInfo,omitempty"`
+	ProxyPort  int    `json:"proxyPort,omitempty"`
+}
+
+func buildEndpointsJSON(endpoints []EndpointInfo, showServerDetails bool, isPublic bool) template.JS {
+	view := make([]endpointView, 0, len(endpoints))
+	for _, ep := range endpoints {
+		latency := "n/a"
+		if ep.Latency > 0 {
+			latency = fmt.Sprintf("%dms", ep.Latency.Milliseconds())
+		}
+		item := endpointView{
+			Name:      ep.Name,
+			StableID:  ep.StableID,
+			Status:    ep.Status,
+			Latency:   latency,
+			LatencyMs: ep.Latency.Milliseconds(),
+			Index:     ep.Index,
+		}
+		if !isPublic {
+			item.URL = ep.URL
+		}
+		if showServerDetails {
+			item.ServerInfo = ep.ServerInfo
+			item.ProxyPort = ep.ProxyPort
+		}
+		view = append(view, item)
+	}
+
+	data, err := json.Marshal(view)
+	if err != nil {
+		return template.JS("[]")
+	}
+	return template.JS(data)
 }
 
 func HealthHandler() http.HandlerFunc {

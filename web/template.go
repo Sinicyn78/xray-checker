@@ -49,6 +49,7 @@ type PageData struct {
 	Instance                   string
 	PushUrl                    string
 	Endpoints                  []EndpointInfo
+	EndpointsJSON              template.JS
 	ShowServerDetails          bool
 	IsPublic                   bool
 	SubscriptionName           string
