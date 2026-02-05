@@ -201,6 +201,13 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 	case "file":
 		filePath := strings.TrimPrefix(subscriptionData, "file://")
 		sourcePath = filePath
+		if info, statErr := os.Stat(filePath); statErr == nil && info.IsDir() {
+			configs, folderErr := p.parseFolder(filePath)
+			if folderErr != nil {
+				return nil, folderErr
+			}
+			return &ParseResult{Configs: configs, Name: ""}, nil
+		}
 		rawData, err = os.ReadFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read file: %v", err)
@@ -221,6 +228,14 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 		rawData = []byte(subscriptionData)
 	}
 
+	configs, parseErr := p.parseRawData(rawData, sourcePath, subName)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	return &ParseResult{Configs: configs, Name: subName}, nil
+}
+
+func (p *Parser) parseRawData(rawData []byte, sourcePath, subName string) ([]*models.ProxyConfig, error) {
 	trimmedData := strings.TrimSpace(string(rawData))
 	logger.Debug("Raw data size: %d bytes", len(rawData))
 	if strings.HasPrefix(trimmedData, "[") {
@@ -229,7 +244,7 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 		if jsonErr != nil {
 			logger.Warn("Failed to parse JSON array, falling back to share links: %v", jsonErr)
 		} else {
-			return &ParseResult{Configs: configs, Name: subName}, nil
+			return configs, nil
 		}
 	}
 
@@ -239,7 +254,7 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 		if jsonErr != nil {
 			logger.Warn("Failed to parse JSON object, falling back to share links: %v", jsonErr)
 		} else {
-			return &ParseResult{Configs: configs, Name: subName}, nil
+			return configs, nil
 		}
 	}
 
@@ -248,19 +263,19 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 	logger.Debug("Cleaned share-link data size: %d bytes", len(cleanedData))
 
 	if cfgs, err := p.parseShareLinksBulk(cleanedData, originalData, subName); err == nil {
-		return cfgs, nil
+		return cfgs.Configs, nil
 	}
 
 	logger.Warn("Bulk parsing failed; retrying after filtering invalid configs")
 	if cleaned, filtered := p.filterValidShareLinks(cleanedData); filtered {
 		if cfgs, retryErr := p.parseShareLinksBulk(cleaned, originalData, subName); retryErr == nil {
-			return cfgs, nil
+			return cfgs.Configs, nil
 		}
 	}
 
 	logger.Warn("Bulk retry failed; falling back to line-by-line")
 	if proxyConfigs, lineErr := p.parseShareLinksIndividually(cleanedData, originalData); lineErr == nil {
-		return &ParseResult{Configs: proxyConfigs, Name: subName}, nil
+		return proxyConfigs, nil
 	}
 
 	return nil, fmt.Errorf("no valid proxy configurations found")
@@ -1162,7 +1177,7 @@ func (p *Parser) parseFolder(folderPath string) ([]*models.ProxyConfig, error) {
 
 		fileName := entry.Name()
 		ext := strings.ToLower(filepath.Ext(fileName))
-		if ext != ".json" {
+		if ext != ".json" && ext != ".txt" {
 			continue
 		}
 
@@ -1173,7 +1188,20 @@ func (p *Parser) parseFolder(folderPath string) ([]*models.ProxyConfig, error) {
 			continue
 		}
 
-		configs, err := p.parseSingleConfigFile(data, configIndex, filePath)
+		if ext == ".txt" {
+			if removed, kept, cleanErr := p.removeInvalidConfigsFromFile(filePath, data); cleanErr != nil {
+				logger.Warn("Failed to clean invalid configs from file %s: %v", fileName, cleanErr)
+			} else if removed > 0 {
+				logger.Warn("Removed %d invalid configs from file %s (kept %d), reloading", removed, fileName, kept)
+				data, err = os.ReadFile(filePath)
+				if err != nil {
+					logger.Warn("Failed to read file %s after cleanup: %v", fileName, err)
+					continue
+				}
+			}
+		}
+
+		configs, err := p.parseRawData(data, filePath, "")
 		if err != nil {
 			logger.Warn("Failed to parse file %s: %v", fileName, err)
 			continue

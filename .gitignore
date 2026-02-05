@@ -31,4 +31,5 @@ test-files/
 configs/
 geo/
 .claude/
-TODO.md
+TODO.md.codex/PRIVATE_NOTES.md
+.codex/
