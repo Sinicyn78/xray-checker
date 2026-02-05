@@ -11,6 +11,7 @@ import (
 	"xray-checker/config"
 	"xray-checker/logger"
 	"xray-checker/models"
+	"xray-checker/subscription"
 )
 
 //go:embed openapi.yaml
@@ -70,6 +71,21 @@ type APIResponse struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
 	Error   string      `json:"error,omitempty"`
+}
+
+type RemoteSourceInfo struct {
+	ID          string `json:"id"`
+	URL         string `json:"url"`
+	FileName    string `json:"fileName"`
+	LastChecked string `json:"lastChecked,omitempty"`
+	LastUpdated string `json:"lastUpdated,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+type RemoteStateResponse struct {
+	IntervalSeconds int                `json:"intervalSeconds"`
+	DownloadDir     string             `json:"downloadDir"`
+	Sources         []RemoteSourceInfo `json:"sources"`
 }
 
 func writeJSON(w http.ResponseWriter, data interface{}) {
@@ -334,6 +350,129 @@ func APIDocsHandler() http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write([]byte(swaggerUIHTML))
 	}
+}
+
+func APIRemoteSourcesHandler(manager *subscription.RemoteManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if manager == nil {
+			writeError(w, "Remote subscriptions not configured", http.StatusBadRequest)
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			state := manager.GetState()
+			resp := RemoteStateResponse{
+				IntervalSeconds: state.IntervalSeconds,
+				DownloadDir:     manager.DownloadDir(),
+				Sources:         make([]RemoteSourceInfo, 0, len(state.Sources)),
+			}
+			for _, src := range state.Sources {
+				resp.Sources = append(resp.Sources, RemoteSourceInfo{
+					ID:          src.ID,
+					URL:         src.URL,
+					FileName:    src.FileName,
+					LastChecked: formatTime(src.LastChecked),
+					LastUpdated: formatTime(src.LastUpdated),
+					Error:       src.Error,
+				})
+			}
+			writeJSON(w, resp)
+			return
+		case http.MethodPost:
+			var req struct {
+				URLs []string `json:"urls"`
+				URL  string   `json:"url"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeError(w, "Invalid request body", http.StatusBadRequest)
+				return
+			}
+			if req.URL != "" {
+				req.URLs = append(req.URLs, req.URL)
+			}
+			if len(req.URLs) == 0 {
+				writeError(w, "No URLs provided", http.StatusBadRequest)
+				return
+			}
+			added, err := manager.AddURLs(req.URLs)
+			if err != nil {
+				writeError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, added)
+			return
+		case http.MethodDelete:
+			id := r.URL.Query().Get("id")
+			if id == "" {
+				id = r.URL.Query().Get("url")
+			}
+			if id == "" {
+				writeError(w, "id or url is required", http.StatusBadRequest)
+				return
+			}
+			if !manager.RemoveByID(id) {
+				writeError(w, "source not found", http.StatusNotFound)
+				return
+			}
+			writeJSON(w, map[string]string{"status": "removed"})
+			return
+		default:
+			writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func APIRemoteIntervalHandler(manager *subscription.RemoteManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if manager == nil {
+			writeError(w, "Remote subscriptions not configured", http.StatusBadRequest)
+			return
+		}
+		if r.Method != http.MethodPut {
+			writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			IntervalSeconds int `json:"intervalSeconds"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.IntervalSeconds <= 0 {
+			writeError(w, "Interval must be greater than 0", http.StatusBadRequest)
+			return
+		}
+		manager.SetInterval(req.IntervalSeconds)
+		writeJSON(w, map[string]int{"intervalSeconds": req.IntervalSeconds})
+	}
+}
+
+func APIRemoteRefreshHandler(manager *subscription.RemoteManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if manager == nil {
+			writeError(w, "Remote subscriptions not configured", http.StatusBadRequest)
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		updated, err := manager.CheckUpdates()
+		if err != nil {
+			writeError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]int{"updated": updated})
+	}
+}
+
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }
 
 const swaggerUIHTML = `<!DOCTYPE html>

@@ -645,9 +645,31 @@
         x-show="showServersHeader"
         class="flex flex-wrap items-center justify-between gap-3 mb-4"
       >
-        <h2 class="text-base font-semibold text-primary">Servers</h2>
         {{ if not .IsPublic }}
         <div class="flex flex-wrap items-center gap-2">
+          <button
+            class="btn px-3 py-1.5 rounded-lg text-xs font-medium"
+            :class="activeTab === 'servers' ? 'btn-active' : ''"
+            @click="setTab('servers')"
+          >
+            Servers
+          </button>
+          <button
+            class="btn px-3 py-1.5 rounded-lg text-xs font-medium"
+            :class="activeTab === 'subscriptions' ? 'btn-active' : ''"
+            @click="setTab('subscriptions')"
+          >
+            Subscriptions
+          </button>
+        </div>
+        {{ else }}
+        <h2 class="text-base font-semibold text-primary">Servers</h2>
+        {{ end }}
+        {{ if not .IsPublic }}
+        <div
+          class="flex flex-wrap items-center gap-2"
+          x-show="activeTab === 'servers'"
+        >
           <a
             href="./metrics"
             target="_blank"
@@ -733,6 +755,86 @@
       </div>
 
       {{ if .Endpoints }}
+      <div x-show="activeTab === 'subscriptions'">
+        <div class="card rounded-lg p-4 mb-4">
+          <div class="flex flex-col gap-4">
+            <div>
+              <h3 class="text-sm font-semibold text-primary">Remote TXT from Git</h3>
+              <div class="text-xs text-muted mt-1">
+                Download folder: <span x-text="remote.downloadDir || 'n/a'"></span>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-3">
+              <label class="text-xs text-muted">Check interval (seconds)</label>
+              <input
+                type="number"
+                min="10"
+                class="w-28 px-2 py-1 rounded-md text-xs"
+                x-model.number="remote.intervalSeconds"
+              />
+              <button
+                class="btn px-3 py-1.5 rounded-lg text-xs font-medium"
+                @click="updateRemoteInterval"
+              >
+                Save
+              </button>
+              <button
+                class="btn px-3 py-1.5 rounded-lg text-xs font-medium"
+                @click="refreshRemote"
+              >
+                Check now
+              </button>
+            </div>
+
+            <div class="flex flex-col gap-2">
+              <label class="text-xs text-muted">Git TXT links (one per line)</label>
+              <textarea
+                class="w-full h-24 px-3 py-2 rounded-lg text-xs"
+                placeholder="https://github.com/user/repo/blob/main/list.txt"
+                x-model="remote.newUrls"
+              ></textarea>
+              <div class="flex items-center gap-2">
+                <button
+                  class="btn px-3 py-1.5 rounded-lg text-xs font-medium"
+                  @click="addRemoteUrls"
+                >
+                  Add
+                </button>
+                <span class="text-xs text-muted" x-text="remote.statusMessage"></span>
+              </div>
+            </div>
+
+            <div class="flex flex-col gap-2">
+              <div class="text-xs text-muted">Sources</div>
+              <div class="grid gap-2">
+                <template x-for="item in remote.sources" :key="item.id">
+                  <div class="card-flat rounded-md px-3 py-2 flex flex-col gap-1">
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="text-xs text-primary truncate" x-text="item.url"></div>
+                      <button
+                        class="btn px-2 py-1 rounded text-xs"
+                        @click="removeRemote(item.id)"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    <div class="text-[11px] text-muted">
+                      File: <span x-text="item.fileName"></span>
+                      <span class="ml-2">Checked: <span x-text="item.lastChecked || 'n/a'"></span></span>
+                      <span class="ml-2">Updated: <span x-text="item.lastUpdated || 'n/a'"></span></span>
+                      <span class="ml-2 text-offline" x-show="item.error">Error: <span x-text="item.error"></span></span>
+                    </div>
+                  </div>
+                </template>
+                <div class="text-xs text-muted" x-show="remote.sources.length === 0">No sources yet.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div x-show="activeTab === 'servers'">
       <!-- Controls -->
       <div x-show="showControls" class="flex flex-col gap-2 mb-4">
         <!-- Mobile expanded search (separate row) -->
@@ -1003,9 +1105,10 @@
             class="hover:text-secondary"
             >Sinicyn</a
           >
-        </div>
-        {{ end }}
-        <div class="mt-2">Version: {{.Version}} · Patch: 2026-02-05-1</div>
+      </div>
+      {{ end }}
+      </div>
+        <div class="mt-2">Version: {{.Version}} · Patch: 2026-02-05-2</div>
       </footer>
     </div>
 
@@ -1027,6 +1130,7 @@
           searchOpen: false,
           filter: localStorage.getItem('filter') || 'all',
           sort: localStorage.getItem('sort') || 'default',
+          activeTab: localStorage.getItem('activeTab') || 'servers',
           toasts: [],
           initialLoad: true,
 
@@ -1052,6 +1156,15 @@
           badgeSize: 'md',
           badgeRounded: 'md',
           badgeTransparent: false,
+
+          remote: {
+            intervalSeconds: 300,
+            downloadDir: '',
+            sources: [],
+            newUrls: '',
+            statusMessage: '',
+            loaded: false
+          },
 
           get badgeClasses() {
             const classes = [];
@@ -1112,6 +1225,11 @@
             const params = new URLSearchParams(window.location.search);
 
             await this.loadProxies();
+            {{ if not .IsPublic }}
+            if (this.activeTab === 'subscriptions') {
+              await this.loadRemote();
+            }
+            {{ end }}
 
             // Check for badge mode
             const stableId = params.get('stableId');
@@ -1195,6 +1313,16 @@
             this.autoRefresh = !this.autoRefresh;
             localStorage.setItem('autoRefresh', this.autoRefresh);
             this.autoRefresh ? this.startCountdown() : this.stopCountdown();
+          },
+
+          setTab(tab) {
+            this.activeTab = tab;
+            localStorage.setItem('activeTab', tab);
+            {{ if not .IsPublic }}
+            if (tab === 'subscriptions' && !this.remote.loaded) {
+              this.loadRemote();
+            }
+            {{ end }}
           },
 
           setFilter(f) { this.filter = f; localStorage.setItem('filter', f); },
@@ -1295,6 +1423,84 @@
               console.error('Failed to refresh:', e);
             }
             this.countdown = {{ .CheckInterval }};
+          },
+
+          async loadRemote() {
+            try {
+              const res = await fetch('./api/v1/subscriptions/remote');
+              const json = await res.json();
+              if (!json.success) throw new Error(json.error || 'Failed');
+              this.remote.intervalSeconds = json.data.intervalSeconds || 300;
+              this.remote.downloadDir = json.data.downloadDir || '';
+              this.remote.sources = json.data.sources || [];
+              this.remote.loaded = true;
+              this.remote.statusMessage = '';
+            } catch (e) {
+              this.remote.statusMessage = 'Failed to load remote sources';
+              console.error('Failed to load remote sources:', e);
+            }
+          },
+
+          async addRemoteUrls() {
+            const lines = (this.remote.newUrls || '').split('\n').map(s => s.trim()).filter(Boolean);
+            if (!lines.length) return;
+            try {
+              const res = await fetch('./api/v1/subscriptions/remote', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ urls: lines })
+              });
+              const json = await res.json();
+              if (!json.success) throw new Error(json.error || 'Failed');
+              this.remote.newUrls = '';
+              await this.loadRemote();
+              this.showToast('Remote sources added');
+            } catch (e) {
+              this.remote.statusMessage = 'Failed to add sources';
+              console.error('Failed to add sources:', e);
+            }
+          },
+
+          async removeRemote(id) {
+            try {
+              const res = await fetch('./api/v1/subscriptions/remote?id=' + encodeURIComponent(id), { method: 'DELETE' });
+              const json = await res.json();
+              if (!json.success) throw new Error(json.error || 'Failed');
+              await this.loadRemote();
+              this.showToast('Remote source removed');
+            } catch (e) {
+              this.remote.statusMessage = 'Failed to remove source';
+              console.error('Failed to remove source:', e);
+            }
+          },
+
+          async updateRemoteInterval() {
+            try {
+              const res = await fetch('./api/v1/subscriptions/remote/interval', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ intervalSeconds: this.remote.intervalSeconds })
+              });
+              const json = await res.json();
+              if (!json.success) throw new Error(json.error || 'Failed');
+              this.showToast('Interval saved');
+            } catch (e) {
+              this.remote.statusMessage = 'Failed to save interval';
+              console.error('Failed to save interval:', e);
+            }
+          },
+
+          async refreshRemote() {
+            try {
+              const res = await fetch('./api/v1/subscriptions/remote/refresh', { method: 'POST' });
+              const json = await res.json();
+              if (!json.success) throw new Error(json.error || 'Failed');
+              await this.loadRemote();
+              this.showToast('Remote sources checked');
+            } catch (e) {
+              this.remote.statusMessage = 'Failed to refresh sources';
+              console.error('Failed to refresh sources:', e);
+            }
           },
 
           async copyConfig(proxy) {

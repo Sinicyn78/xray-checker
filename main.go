@@ -98,6 +98,15 @@ func main() {
 		config.CLIConfig.Proxy.CheckMethod,
 	)
 
+	remoteManager, remoteErr := subscription.GetRemoteManager()
+	if remoteErr != nil {
+		logger.Warn("Remote subscription manager unavailable: %v", remoteErr)
+	}
+	if remoteManager != nil {
+		stopRemote := make(chan struct{})
+		remoteManager.StartUpdateLoop(stopRemote)
+	}
+
 	runCheckIteration := func() {
 		logger.Info("Starting proxy check iteration")
 		proxyChecker.CheckAllProxies()
@@ -179,6 +188,9 @@ func main() {
 	protectedHandler.Handle("/api/v1/status", web.APIStatusHandler(proxyChecker))
 	protectedHandler.Handle("/api/v1/system/info", web.APISystemInfoHandler(version, startTime))
 	protectedHandler.Handle("/api/v1/system/ip", web.APISystemIPHandler(proxyChecker))
+	protectedHandler.Handle("/api/v1/subscriptions/remote", web.APIRemoteSourcesHandler(remoteManager))
+	protectedHandler.Handle("/api/v1/subscriptions/remote/interval", web.APIRemoteIntervalHandler(remoteManager))
+	protectedHandler.Handle("/api/v1/subscriptions/remote/refresh", web.APIRemoteRefreshHandler(remoteManager))
 	protectedHandler.Handle("/api/v1/docs", web.APIDocsHandler())
 	protectedHandler.Handle("/api/v1/openapi.yaml", web.APIOpenAPIHandler())
 
