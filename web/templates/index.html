@@ -794,15 +794,18 @@
                 placeholder="https://github.com/user/repo/blob/main/list.txt"
                 x-model="remote.newUrls"
               ></textarea>
-              <div class="flex items-center gap-2">
-                <button
-                  class="btn px-3 py-1.5 rounded-lg text-xs font-medium"
-                  @click="addRemoteUrls"
-                >
-                  Add
-                </button>
-                <span class="text-xs text-muted" x-text="remote.statusMessage"></span>
-              </div>
+            <div class="flex items-center gap-2">
+              <button
+                class="btn px-3 py-1.5 rounded-lg text-xs font-medium"
+                @click="addRemoteUrls"
+              >
+                Add
+              </button>
+              <span class="text-xs text-muted" x-text="remote.statusMessage"></span>
+            </div>
+            <div class="text-xs text-muted" x-show="remote.statusMessage && remote.sources.length === 0">
+              If sources don't appear, check `SUBSCRIPTION_URL=file:///...` and refresh.
+            </div>
             </div>
 
             <div class="flex flex-col gap-2">
@@ -1108,7 +1111,7 @@
       </div>
       {{ end }}
       </div>
-        <div class="mt-2">Version: {{.Version}} · Patch: 2026-02-05-2</div>
+        <div class="mt-2">Version: {{.Version}} · Patch: 2026-02-05-3</div>
       </footer>
     </div>
 
@@ -1226,9 +1229,7 @@
 
             await this.loadProxies();
             {{ if not .IsPublic }}
-            if (this.activeTab === 'subscriptions') {
-              await this.loadRemote();
-            }
+            await this.loadRemote();
             {{ end }}
 
             // Check for badge mode
@@ -1454,6 +1455,7 @@
               if (!json.success) throw new Error(json.error || 'Failed');
               this.remote.newUrls = '';
               await this.loadRemote();
+              this.setTab('subscriptions');
               this.showToast('Remote sources added');
             } catch (e) {
               this.remote.statusMessage = 'Failed to add sources';
