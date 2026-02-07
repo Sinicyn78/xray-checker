@@ -26,6 +26,10 @@ var (
 func main() {
 	config.Parse(version)
 
+	if err := logger.SetFile(config.CLIConfig.LogFile); err != nil {
+		logger.Fatal("Failed to initialize log file: %v", err)
+	}
+
 	logLevel := logger.ParseLevel(config.CLIConfig.LogLevel)
 	logger.SetLevel(logLevel)
 

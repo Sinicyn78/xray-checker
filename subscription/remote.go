@@ -128,6 +128,8 @@ func (m *RemoteManager) AddURLs(urls []string) ([]RemoteSource, error) {
 	m.mu.Lock()
 
 	var added []RemoteSource
+	invalidCount := 0
+	duplicateCount := 0
 	seen := make(map[string]bool)
 	for _, src := range m.state.Sources {
 		seen[src.URL] = true
@@ -136,9 +138,11 @@ func (m *RemoteManager) AddURLs(urls []string) ([]RemoteSource, error) {
 	for _, raw := range urls {
 		normalized, err := normalizeRemoteURL(raw)
 		if err != nil {
+			invalidCount++
 			continue
 		}
 		if seen[normalized] {
+			duplicateCount++
 			continue
 		}
 		id := hashURL(normalized)
@@ -153,6 +157,20 @@ func (m *RemoteManager) AddURLs(urls []string) ([]RemoteSource, error) {
 		m.state.Sources = append(m.state.Sources, item)
 		seen[normalized] = true
 		added = append(added, item)
+	}
+
+	if len(added) == 0 {
+		m.mu.Unlock()
+		switch {
+		case invalidCount > 0 && duplicateCount > 0:
+			return nil, fmt.Errorf("no URLs added: %d invalid, %d duplicates", invalidCount, duplicateCount)
+		case invalidCount > 0:
+			return nil, fmt.Errorf("no URLs added: all %d URL(s) are invalid", invalidCount)
+		case duplicateCount > 0:
+			return nil, fmt.Errorf("no URLs added: all %d URL(s) already exist", duplicateCount)
+		default:
+			return nil, fmt.Errorf("no URLs added")
+		}
 	}
 
 	if err := m.saveLocked(); err != nil {

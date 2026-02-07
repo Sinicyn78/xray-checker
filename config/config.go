@@ -67,6 +67,7 @@ type CLI struct {
 	Version  VersionFlag `name:"version" help:"Print version information and quit"`
 	RunOnce  bool        `name:"run-once" help:"Run one check cycle and exit" default:"false" env:"RUN_ONCE"`
 	LogLevel string      `name:"log-level" help:"Log level (debug|info|warn|error|none)" default:"info" env:"LOG_LEVEL"`
+	LogFile  string      `name:"log-file" help:"Path to log file (in addition to stdout/stderr)" default:"" env:"LOG_FILE"`
 }
 
 func (c *CLI) Validate() error {

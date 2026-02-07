@@ -5,7 +5,9 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 )
 
 type Level int
@@ -22,6 +24,8 @@ var (
 	level       = LevelInfo
 	errorLogger = log.New(os.Stderr, "", log.LstdFlags)
 	stdLogger   = log.New(os.Stdout, "", log.LstdFlags)
+	logFile     *os.File
+	mu          sync.Mutex
 )
 
 func ParseLevel(s string) Level {
@@ -59,14 +63,56 @@ func (l Level) String() string {
 }
 
 func SetLevel(l Level) {
+	mu.Lock()
+	defer mu.Unlock()
 	level = l
-	if l == LevelNone {
+	applyOutputsLocked()
+}
+
+func SetFile(path string) error {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if logFile != nil {
+		_ = logFile.Close()
+		logFile = nil
+	}
+	if strings.TrimSpace(path) == "" {
+		applyOutputsLocked()
+		return nil
+	}
+
+	clean := filepath.Clean(path)
+	if dir := filepath.Dir(clean); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+
+	f, err := os.OpenFile(clean, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	logFile = f
+	applyOutputsLocked()
+	return nil
+}
+
+func applyOutputsLocked() {
+	if level == LevelNone {
 		stdLogger.SetOutput(io.Discard)
 		errorLogger.SetOutput(io.Discard)
-	} else {
-		stdLogger.SetOutput(os.Stdout)
-		errorLogger.SetOutput(os.Stderr)
+		return
 	}
+
+	stdOut := io.Writer(os.Stdout)
+	errOut := io.Writer(os.Stderr)
+	if logFile != nil {
+		stdOut = io.MultiWriter(os.Stdout, logFile)
+		errOut = io.MultiWriter(os.Stderr, logFile)
+	}
+	stdLogger.SetOutput(stdOut)
+	errorLogger.SetOutput(errOut)
 }
 
 func Debug(format string, v ...interface{}) {
@@ -94,10 +140,14 @@ func Error(format string, v ...interface{}) {
 }
 
 func Fatal(format string, v ...interface{}) {
-	log.Fatalf("[FATAL] "+format, v...)
+	errorLogger.Fatalf("[FATAL] "+format, v...)
 }
 
 func Startup(format string, v ...interface{}) {
+	if level >= LevelInfo {
+		stdLogger.Printf(format, v...)
+		return
+	}
 	fmt.Printf(format+"\n", v...)
 }
 
