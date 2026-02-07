@@ -191,10 +191,7 @@ func (g *ConfigGenerator) generateStreamSettings(proxy *models.ProxyConfig) map[
 		network = "tcp"
 	}
 
-	security := proxy.Security
-	if security == "" {
-		security = "none"
-	}
+	security := normalizeStreamSecurity(proxy.Security, proxy.Name)
 
 	ss := map[string]interface{}{
 		"network":  network,
@@ -304,6 +301,19 @@ func (g *ConfigGenerator) generateStreamSettings(proxy *models.ProxyConfig) map[
 	}
 
 	return ss
+}
+
+func normalizeStreamSecurity(raw string, proxyName string) string {
+	security := strings.ToLower(strings.TrimSpace(raw))
+	switch security {
+	case "", "none", "false", "0", "off", "disabled":
+		return "none"
+	case "tls", "reality":
+		return security
+	default:
+		logger.Warn("Unsupported stream security %q for proxy %s, falling back to none", raw, proxyName)
+		return "none"
+	}
 }
 
 func (g *ConfigGenerator) generateRouting(proxies []*models.ProxyConfig) map[string]interface{} {
