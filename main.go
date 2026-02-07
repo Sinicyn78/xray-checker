@@ -254,8 +254,11 @@ func cleanupBadFileConfigs(proxyChecker *checker.ProxyChecker) {
 		if proxy.SourcePath == "" || proxy.SourceLine == "" {
 			continue
 		}
+		if proxy.StableID == "" {
+			proxy.StableID = proxy.GenerateStableID()
+		}
 
-		status, latency, err := proxyChecker.GetProxyStatus(proxy.Name)
+		status, latency, err := proxyChecker.GetProxyStatusByStableID(proxy.StableID)
 		if err == nil && status && latency > 0 && latency <= checker.BadLatencyThreshold() {
 			continue
 		}
