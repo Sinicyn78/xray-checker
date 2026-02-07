@@ -70,11 +70,20 @@ func main() {
 	}
 
 	xrayRunner := xray.NewRunner(configFile)
-	if err := xrayRunner.Start(); err != nil {
-		logger.Fatal("Error starting Xray: %v", err)
+	xrayRunning := false
+	if len(*proxyConfigs) > 0 {
+		if err := xrayRunner.Start(); err != nil {
+			logger.Fatal("Error starting Xray: %v", err)
+		}
+		xrayRunning = true
+	} else {
+		logger.Warn("No active proxies loaded; Xray will stay stopped until proxies appear")
 	}
 
 	defer func() {
+		if !xrayRunning {
+			return
+		}
 		if err := xrayRunner.Stop(); err != nil {
 			logger.Error("Error stopping Xray: %v", err)
 		}
@@ -145,6 +154,15 @@ func main() {
 			logger.Info("Checking subscriptions for updates...")
 			newConfigs, err := subscription.ReadFromMultipleSources(config.CLIConfig.Subscription.URLs)
 			if err != nil {
+				if subscription.ShouldTreatAsEmptyResult(err) {
+					logger.Warn("Subscription source is empty/unavailable, clearing active proxies: %v", err)
+					if len(*proxyConfigs) > 0 {
+						if err := clearConfiguration(proxyConfigs, xrayRunner, &xrayRunning, proxyChecker); err != nil {
+							logger.Error("Error clearing configuration: %v", err)
+						}
+					}
+					return
+				}
 				logger.Error("Error fetching subscriptions: %v", err)
 				return
 			}
@@ -159,7 +177,7 @@ func main() {
 			}
 
 			if !xray.IsConfigsEqual(*proxyConfigs, newConfigs) {
-				if err := updateConfiguration(newConfigs, proxyConfigs, xrayRunner, proxyChecker); err != nil {
+				if err := updateConfiguration(newConfigs, proxyConfigs, xrayRunner, &xrayRunning, proxyChecker); err != nil {
 					logger.Error("Error updating configuration: %v", err)
 				}
 			} else {
@@ -228,7 +246,7 @@ func main() {
 }
 
 func cleanupBadFileConfigs(proxyChecker *checker.ProxyChecker) {
-	const badDurationThreshold = time.Minute * 5
+	const badDurationThreshold = time.Minute * 10
 
 	badByFile := make(map[string]map[string]bool)
 	proxies := proxyChecker.GetProxies()
@@ -265,7 +283,7 @@ func cleanupBadFileConfigs(proxyChecker *checker.ProxyChecker) {
 }
 
 func updateConfiguration(newConfigs []*models.ProxyConfig, currentConfigs *[]*models.ProxyConfig,
-	xrayRunner *xray.Runner, proxyChecker *checker.ProxyChecker) error {
+	xrayRunner *xray.Runner, xrayRunning *bool, proxyChecker *checker.ProxyChecker) error {
 
 	logger.Info("Subscription changed, updating configuration...")
 
@@ -282,13 +300,30 @@ func updateConfiguration(newConfigs []*models.ProxyConfig, currentConfigs *[]*mo
 		return err
 	}
 
-	if err := xrayRunner.Stop(); err != nil {
-		return err
+	if len(newConfigs) == 0 {
+		if *xrayRunning {
+			if err := xrayRunner.Stop(); err != nil {
+				return err
+			}
+			*xrayRunning = false
+		}
+		proxyChecker.UpdateProxies(newConfigs)
+		*currentConfigs = newConfigs
+		web.RegisterConfigEndpoints(newConfigs, proxyChecker, config.CLIConfig.Xray.StartPort)
+		logger.Info("Configuration updated: 0 proxies (empty source)")
+		return nil
+	}
+
+	if *xrayRunning {
+		if err := xrayRunner.Stop(); err != nil {
+			return err
+		}
 	}
 
 	if err := xrayRunner.Start(); err != nil {
 		return err
 	}
+	*xrayRunning = true
 
 	proxyChecker.UpdateProxies(newConfigs)
 
@@ -298,4 +333,11 @@ func updateConfiguration(newConfigs []*models.ProxyConfig, currentConfigs *[]*mo
 
 	logger.Info("Configuration updated: %d proxies", len(newConfigs))
 	return nil
+}
+
+func clearConfiguration(currentConfigs *[]*models.ProxyConfig, xrayRunner *xray.Runner,
+	xrayRunning *bool, proxyChecker *checker.ProxyChecker) error {
+
+	empty := []*models.ProxyConfig{}
+	return updateConfiguration(empty, currentConfigs, xrayRunner, xrayRunning, proxyChecker)
 }

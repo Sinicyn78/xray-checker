@@ -38,6 +38,11 @@ type subscriptionResult struct {
 func InitializeConfiguration(configFile string, version string) (*[]*models.ProxyConfig, error) {
 	configs, err := ReadFromMultipleSources(config.CLIConfig.Subscription.URLs)
 	if err != nil {
+		if ShouldTreatAsEmptyResult(err) {
+			logger.Warn("Subscription source is empty/unavailable, starting with empty proxy list: %v", err)
+			empty := []*models.ProxyConfig{}
+			return &empty, nil
+		}
 		return nil, err
 	}
 
