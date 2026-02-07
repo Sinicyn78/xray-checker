@@ -754,7 +754,7 @@
         {{ end }}
       </div>
 
-      {{ if .Endpoints }}
+      {{ if not .IsPublic }}
       <div x-show="activeTab === 'subscriptions'">
         <div class="card rounded-lg p-4 mb-4">
           <div class="flex flex-col gap-4">
@@ -836,6 +836,7 @@
           </div>
         </div>
       </div>
+      {{ end }}
 
       <div x-show="activeTab === 'servers'">
       <!-- Controls -->
@@ -1068,7 +1069,7 @@
           .CheckMethod "download" }}{{.DownloadUrl}}{{ end }}</span
         >
       </div>
-      {{ end }} {{ end }}
+      {{ end }}
 
       <footer
         x-show="showFooter"
@@ -1108,9 +1109,8 @@
             class="hover:text-secondary"
             >Sinicyn</a
           >
-      </div>
-      {{ end }}
-      </div>
+        </div>
+        {{ end }}
         <div class="mt-2">Version: {{.Version}} · Patch: 2026-02-05-3</div>
       </footer>
     </div>
