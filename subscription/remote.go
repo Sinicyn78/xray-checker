@@ -81,8 +81,17 @@ func GetRemoteManager() (*RemoteManager, error) {
 			remoteErr = err
 			return
 		}
+		statePath := remoteStatePath(dir)
+		if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+			remoteErr = err
+			return
+		}
+		if err := migrateLegacyStateFile(dir, statePath); err != nil {
+			remoteErr = err
+			return
+		}
 		manager := &RemoteManager{
-			statePath:   filepath.Join(dir, ".remote_sources.json"),
+			statePath:   statePath,
 			downloadDir: dir,
 			client:      &http.Client{Timeout: 30 * time.Second},
 		}
@@ -117,7 +126,6 @@ func (m *RemoteManager) SetInterval(seconds int) {
 
 func (m *RemoteManager) AddURLs(urls []string) ([]RemoteSource, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	var added []RemoteSource
 	seen := make(map[string]bool)
@@ -148,8 +156,10 @@ func (m *RemoteManager) AddURLs(urls []string) ([]RemoteSource, error) {
 	}
 
 	if err := m.saveLocked(); err != nil {
+		m.mu.Unlock()
 		return nil, err
 	}
+	m.mu.Unlock()
 
 	for i := range added {
 		m.download(&added[i], true)
@@ -396,4 +406,43 @@ func sanitizeFileName(name string) string {
 		return "remote.txt"
 	}
 	return out
+}
+
+func remoteStatePath(downloadDir string) string {
+	parent := filepath.Dir(filepath.Clean(downloadDir))
+	return filepath.Join(parent, ".remote_sources.json")
+}
+
+func migrateLegacyStateFile(downloadDir, statePath string) error {
+	legacyPath := filepath.Join(downloadDir, ".remote_sources.json")
+	if legacyPath == statePath {
+		return nil
+	}
+
+	if _, err := os.Stat(statePath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if _, err := os.Stat(legacyPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	if err := os.Rename(legacyPath, statePath); err == nil {
+		return nil
+	}
+
+	data, err := os.ReadFile(legacyPath)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(statePath, data, 0o644); err != nil {
+		return err
+	}
+	_ = os.Remove(legacyPath)
+	return nil
 }
