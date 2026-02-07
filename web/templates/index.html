@@ -1527,11 +1527,23 @@
     <script>
       // Fallback renderer: if Alpine fails to render cards, show a minimal list.
       window.__endpoints = {{ .EndpointsJSON }};
-      setTimeout(() => {
+      window.__alpineInitialized = false;
+      document.addEventListener('alpine:initialized', () => {
+        window.__alpineInitialized = true;
+      });
+
+      const isAlpineReady = () => {
+        if (window.__alpineInitialized) return true;
+        const root = document.querySelector('[x-data]');
+        return !!(root && (root.__x || root._x_dataStack));
+      };
+
+      const renderFallbackIfNeeded = () => {
         try {
           const grid = document.querySelector('[data-proxy-grid]');
           if (!grid) return;
           if (grid.querySelectorAll('.proxy-card').length > 0) return;
+          if (isAlpineReady()) return;
           if (!Array.isArray(window.__endpoints) || window.__endpoints.length === 0) return;
 
           const frag = document.createDocumentFragment();
@@ -1583,7 +1595,11 @@
         } catch (e) {
           console.error('Fallback renderer error:', e);
         }
-      }, 1000);
+      };
+
+      window.addEventListener('load', () => {
+        setTimeout(renderFallbackIfNeeded, 3500);
+      });
     </script>
   </body>
 </html>
