@@ -18,24 +18,25 @@ import (
 )
 
 type ProxyChecker struct {
-	proxies         []*models.ProxyConfig
-	startPort       int
-	ipCheck         string
-	currentIP       string
-	httpClient      *http.Client
-	currentMetrics  sync.Map
-	latencyMetrics  sync.Map
-	ipInitialized   bool
-	ipCheckTimeout  int
-	genMethodURL    string
-	downloadURL     string
-	downloadTimeout int
-	downloadMinSize int64
-	checkMethod     string
-	mu              sync.RWMutex
-	generation      uint64
-	badSinceMu      sync.RWMutex
-	badSince        map[string]time.Time
+	proxies          []*models.ProxyConfig
+	startPort        int
+	ipCheck          string
+	currentIP        string
+	httpClient       *http.Client
+	currentMetrics   sync.Map
+	latencyMetrics   sync.Map
+	ipInitialized    bool
+	ipCheckTimeout   int
+	genMethodURL     string
+	downloadURL      string
+	downloadTimeout  int
+	downloadMinSize  int64
+	checkMethod      string
+	checkConcurrency int
+	mu               sync.RWMutex
+	generation       uint64
+	badSinceMu       sync.RWMutex
+	badSince         map[string]time.Time
 }
 
 const badLatencyThreshold = time.Millisecond * 1000
@@ -44,7 +45,11 @@ func BadLatencyThreshold() time.Duration {
 	return badLatencyThreshold
 }
 
-func NewProxyChecker(proxies []*models.ProxyConfig, startPort int, ipCheckURL string, ipCheckTimeout int, genMethodURL string, downloadURL string, downloadTimeout int, downloadMinSize int64, checkMethod string) *ProxyChecker {
+func NewProxyChecker(proxies []*models.ProxyConfig, startPort int, ipCheckURL string, ipCheckTimeout int, genMethodURL string, downloadURL string, downloadTimeout int, downloadMinSize int64, checkMethod string, checkConcurrency int) *ProxyChecker {
+	if checkConcurrency <= 0 {
+		checkConcurrency = 32
+	}
+
 	return &ProxyChecker{
 		proxies:   proxies,
 		startPort: startPort,
@@ -52,13 +57,14 @@ func NewProxyChecker(proxies []*models.ProxyConfig, startPort int, ipCheckURL st
 		httpClient: &http.Client{
 			Timeout: time.Second * time.Duration(ipCheckTimeout),
 		},
-		ipCheckTimeout:  ipCheckTimeout,
-		genMethodURL:    genMethodURL,
-		downloadURL:     downloadURL,
-		downloadTimeout: downloadTimeout,
-		downloadMinSize: downloadMinSize,
-		checkMethod:     checkMethod,
-		badSince:        make(map[string]time.Time),
+		ipCheckTimeout:   ipCheckTimeout,
+		genMethodURL:     genMethodURL,
+		downloadURL:      downloadURL,
+		downloadTimeout:  downloadTimeout,
+		downloadMinSize:  downloadMinSize,
+		checkMethod:      checkMethod,
+		checkConcurrency: checkConcurrency,
+		badSince:         make(map[string]time.Time),
 	}
 }
 
@@ -395,11 +401,18 @@ func (pc *ProxyChecker) CheckAllProxies() {
 	currentGeneration := atomic.LoadUint64(&pc.generation)
 	pc.mu.RUnlock()
 
+	if len(proxiesToCheck) == 0 {
+		return
+	}
+
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, pc.checkConcurrency)
 	for _, proxy := range proxiesToCheck {
+		sem <- struct{}{}
 		wg.Add(1)
 		go func(p *models.ProxyConfig, gen uint64) {
 			defer wg.Done()
+			defer func() { <-sem }()
 			pc.checkProxyInternal(p, gen, true)
 		}(proxy, currentGeneration)
 	}

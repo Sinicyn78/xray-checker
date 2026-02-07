@@ -105,6 +105,7 @@ func main() {
 		config.CLIConfig.Proxy.DownloadTimeout,
 		config.CLIConfig.Proxy.DownloadMinSize,
 		config.CLIConfig.Proxy.CheckMethod,
+		config.CLIConfig.Proxy.CheckConcurrency,
 	)
 
 	remoteManager, remoteErr := subscription.GetRemoteManager()

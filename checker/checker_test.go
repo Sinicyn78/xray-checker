@@ -27,7 +27,7 @@ func TestGetProxyStatusByStableIDWithDuplicateNames(t *testing.T) {
 	p1.StableID = p1.GenerateStableID()
 	p2.StableID = p2.GenerateStableID()
 
-	pc := NewProxyChecker([]*models.ProxyConfig{p1, p2}, 10000, "http://127.0.0.1:1", 1, "http://example.com", "", 1, 1, "status")
+	pc := NewProxyChecker([]*models.ProxyConfig{p1, p2}, 10000, "http://127.0.0.1:1", 1, "http://example.com", "", 1, 1, "status", 2)
 	pc.currentMetrics.Store(metricKeyForProxy(p1), true)
 	pc.latencyMetrics.Store(metricKeyForProxy(p1), badLatencyThreshold/2)
 	pc.currentMetrics.Store(metricKeyForProxy(p2), false)
@@ -69,6 +69,7 @@ func TestCheckAllProxiesStatusModeDoesNotRequireCurrentIP(t *testing.T) {
 		1,
 		1,
 		"status",
+		2,
 	)
 
 	pc.CheckAllProxies()
