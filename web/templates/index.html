@@ -1538,12 +1538,29 @@
         return !!(root && (root.__x || root._x_dataStack));
       };
 
+      const getAlpineState = () => {
+        const root = document.querySelector('[x-data]');
+        if (!root) return null;
+        if (root.__x && root.__x.$data) return root.__x.$data;
+        if (root._x_dataStack && root._x_dataStack.length) return root._x_dataStack[0];
+        return null;
+      };
+
       const renderFallbackIfNeeded = () => {
         try {
           const grid = document.querySelector('[data-proxy-grid]');
           if (!grid) return;
           if (grid.querySelectorAll('.proxy-card').length > 0) return;
-          if (isAlpineReady()) return;
+
+          const alpineReady = isAlpineReady();
+          const alpineState = getAlpineState();
+          if (alpineState && alpineState.activeTab && alpineState.activeTab !== 'servers') {
+            return;
+          }
+          if (alpineReady && alpineState && Array.isArray(alpineState.filteredProxies) && alpineState.filteredProxies.length === 0) {
+            return;
+          }
+
           if (!Array.isArray(window.__endpoints) || window.__endpoints.length === 0) return;
 
           const frag = document.createDocumentFragment();
