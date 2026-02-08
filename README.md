@@ -70,7 +70,7 @@ docker run -d \
   --name xray-checker \
   -e SUBSCRIPTION_URL="https://example.com/subscription" \
   -p 2112:2112 \
-  <your-dockerhub-username>/xray-checker:latest
+  sinicyn/xray-checker:latest
 ```
 
 If your fork image is not published yet:
@@ -89,7 +89,7 @@ docker run -d \
 ```yaml
 services:
   xray-checker:
-    image: xray-checker:local
+    image: sinicyn/xray-checker:latest
     container_name: xray-checker
     restart: unless-stopped
     environment:
