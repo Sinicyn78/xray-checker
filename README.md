@@ -1,64 +1,87 @@
-# Xray Checker
+# Xray Checker (Fork)
 
-<div align="center">
+Fork of [kutovoys/xray-checker](https://github.com/kutovoys/xray-checker) with additional production-focused fixes and features.
 
-[![GitHub Release](https://img.shields.io/github/v/release/kutovoys/xray-checker?color=blue)](https://github.com/kutovoys/xray-checker/releases/latest)
-[![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/kutovoys/xray-checker/build-publish.yml)](https://github.com/kutovoys/xray-checker/actions/workflows/build-publish.yml)
-[![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/kutovoys/xray-checker/total?logo=github&color=blue)](https://github.com/kutovoys/xray-checker/releases/latest)
-[![Docker Pulls](https://img.shields.io/docker/pulls/kutovoys/xray-checker?logo=docker&label=pulls)](https://hub.docker.com/r/kutovoys/xray-checker/)
-[![GitHub License](https://img.shields.io/github/license/kutovoys/xray-checker?color=greeen)](https://github.com/kutovoys/xray-checker/blob/main/LICENSE)
-[![ru](https://img.shields.io/badge/lang-ru-blue)](https://github.com/kutovoys/xray-checker/blob/main/README_RU.md)
-[![en](https://img.shields.io/badge/lang-en-red)](https://github.com/kutovoys/xray-checker/blob/main/README.md)
+## About
 
-</div>
-<div align="center">
+`xray-checker` validates proxy availability (VLESS, VMess, Trojan, Shadowsocks) through Xray Core, exports Prometheus metrics, and provides a Web UI/API for monitoring.
 
-[![Documentation](https://img.shields.io/badge/Docs-xray--checker.kutovoy.dev-blue)](https://xray-checker.kutovoy.dev/)
-[![DockerHub](https://img.shields.io/badge/DockerHub-kutovoys%2Fxray--checker-blue)](https://hub.docker.com/r/kutovoys/xray-checker/)
-[![Live Demo](https://img.shields.io/badge/Demo-live-green)](https://demo-xray-checker.kutovoy.dev/)
-[![Telegram Chat](https://img.shields.io/badge/Telegram-Chat-blue?logo=telegram&)](https://t.me/+uZCGx_FRY0tiOGIy)
+Typical use cases:
 
-</div>
+- real-time VPN/proxy subscription monitoring;
+- public status page for users;
+- Prometheus scraping with optional Pushgateway push;
+- integrations with Uptime Kuma and similar systems.
 
-Xray Checker is a tool for monitoring proxy server availability with support for VLESS, VMess, Trojan, and Shadowsocks protocols. It automatically tests connections through Xray Core and provides metrics for Prometheus, as well as API endpoints for integration with monitoring systems.
+## Fork Notes
 
-<div align="center">
-  <img src=".github/screen/xray-checker.webp" alt="Dashboard Screenshot">
-</div>
+- Upstream: `https://github.com/kutovoys/xray-checker`
+- This repository: `https://github.com/Sinicyn78/xray-checker`
+- Core upstream behavior is preserved, with fork-specific improvements listed below.
 
-> [!TIP]
-> **Try the Live Demo:** See Xray Checker in action at [demo-xray-checker.kutovoy.dev](https://demo-xray-checker.kutovoy.dev/)
+### Fork changes vs upstream
 
-## 🚀 Key Features
+- added concurrent check limiter: `PROXY_CHECK_CONCURRENCY`;
+- added file logging: `LOG_FILE`;
+- added remote subscription sources via API (add/remove/refresh URLs without manual file edits);
+- improved `file://` subscription directory handling and remote state location;
+- fixed proxy status mapping by `StableID` to prevent mismatch;
+- improved empty/unavailable subscription handling;
+- improved fallback rendering in Web UI server tab;
+- improved remote URL validation;
+- normalized invalid stream security values.
 
-- 🔍 Monitoring of Xray proxy servers (VLESS, VMess, Trojan, Shadowsocks)
-- 🔄 Automatic configuration updates from subscription (multiple subscriptions supported)
-- 📊 Prometheus metrics export with Pushgateway support
-- 🌐 REST API with OpenAPI/Swagger documentation
-- 🌓 Web interface with dark/light theme
-- 🎨 Full web customization (custom logo, styles, or entire template)
-- 📄 Public status page for VPN services (no authentication required)
-- 📥 Endpoints for monitoring system integration (Uptime Kuma, etc.)
-- 🔒 Basic Auth protection for metrics and web interface
-- 🐳 Docker and Docker Compose support
-- 🌍 Automatic geo files management (geoip.dat, geosite.dat)
-- 📝 Flexible configuration loading:
-  - URL subscriptions (base64, JSON)
-  - Share links (vless://, vmess://, trojan://, ss://)
-  - JSON configuration files
-  - Folders with configurations
+## Features
 
-Full list of features available in the [documentation](https://xray-checker.kutovoy.dev/intro/features).
+- protocols: `vless`, `vmess`, `trojan`, `shadowsocks`;
+- multiple subscription sources merged into one runtime set;
+- supported sources:
+  - subscription URL;
+  - base64 string;
+  - `file://` JSON file;
+  - `folder://` directory with JSON files;
+- check methods:
+  - `ip` (egress IP comparison);
+  - `status` (HTTP status endpoint);
+  - `download` (minimum download size verification);
+- Prometheus metrics:
+  - `xray_proxy_status`;
+  - `xray_proxy_latency_ms`;
+- Web UI + REST API + Swagger (`/api/v1/docs`);
+- public dashboard mode (`WEB_PUBLIC=true`);
+- Basic Auth for API/metrics;
+- UI customization with `WEB_CUSTOM_ASSETS_PATH`;
+- Docker and native binary usage.
 
-## 🚀 Quick Start
+## Architecture (short)
 
-### Docker
+1. Subscription sources are parsed into proxy configs.
+2. `xray_config.json` is generated and Xray Core starts.
+3. Checker validates each proxy (parallelized with concurrency limit).
+4. Status/latency are exposed via metrics and API.
+5. On subscription updates, config is rebuilt automatically.
+
+## Quick Start
+
+### Docker (minimum)
 
 ```bash
 docker run -d \
-  -e SUBSCRIPTION_URL=https://your-subscription-url/sub \
+  --name xray-checker \
+  -e SUBSCRIPTION_URL="https://example.com/subscription" \
   -p 2112:2112 \
-  kutovoys/xray-checker
+  <your-dockerhub-username>/xray-checker:latest
+```
+
+If your fork image is not published yet:
+
+```bash
+docker build -t xray-checker:local .
+docker run -d \
+  --name xray-checker \
+  -e SUBSCRIPTION_URL="https://example.com/subscription" \
+  -p 2112:2112 \
+  xray-checker:local
 ```
 
 ### Docker Compose
@@ -66,48 +89,186 @@ docker run -d \
 ```yaml
 services:
   xray-checker:
-    image: kutovoys/xray-checker
+    image: xray-checker:local
+    container_name: xray-checker
+    restart: unless-stopped
     environment:
-      - SUBSCRIPTION_URL=https://your-subscription-url/sub
+      SUBSCRIPTION_URL: "https://example.com/subscription"
+      PROXY_CHECK_METHOD: "ip"
+      PROXY_CHECK_INTERVAL: "300"
+      PROXY_CHECK_CONCURRENCY: "32"
+      METRICS_PROTECTED: "true"
+      METRICS_USERNAME: "admin"
+      METRICS_PASSWORD: "change-me"
     ports:
       - "2112:2112"
 ```
 
-Detailed installation and configuration documentation is available at [xray-checker.kutovoy.dev](https://xray-checker.kutovoy.dev/intro/quick-start)
+### Binary
 
-## 📈 Project Statistics
+```bash
+go build -o xray-checker .
+./xray-checker --subscription-url="https://example.com/subscription"
+```
 
-<a href="https://star-history.com/#kutovoys/xray-checker&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=kutovoys/xray-checker&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=kutovoys/xray-checker&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=kutovoys/xray-checker&type=Date" />
- </picture>
-</a>
+## Configuration
 
-## 🤝 Contributing
+The app supports both CLI flags and environment variables. Only one field is required: subscription source.
 
-We welcome any contributions to Xray Checker! If you want to help:
+### Required
 
-1. Fork the repository
-2. Create a branch for your changes
-3. Make and test your changes
-4. Create a Pull Request
+- `SUBSCRIPTION_URL` / `--subscription-url`
 
-For more details on how to contribute, read the [contributor's guide](https://xray-checker.kutovoy.dev/contributing/development-guide).
+You can pass multiple sources:
 
-<p align="center">
-Thanks to the all contributors who have helped improve Xray Checker:
-</p>
-<p align="center">
-<a href="https://github.com/kutovoys/xray-checker/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=kutovoys/xray-checker" />
-</a>
-</p>
-<p align="center">
-  Made with <a rel="noopener noreferrer" target="_blank" href="https://contrib.rocks">contrib.rocks</a>
-</p>
+- repeat `--subscription-url` multiple times;
+- or use comma-separated values in `SUBSCRIPTION_URL`.
 
-## VPN Recommendation
+### Main options
 
-For secure and reliable internet access, we recommend [BlancVPN](https://getblancvpn.com/pricing?promo=klugscl&ref=xc-readme). Use promo code `KLUGSCL` for 15% off your subscription.
+#### Subscription
+
+- `SUBSCRIPTION_URL` (`--subscription-url`) - config source(s)
+- `SUBSCRIPTION_UPDATE` (`--subscription-update`, default `true`)
+- `SUBSCRIPTION_UPDATE_INTERVAL` (`--subscription-update-interval`, default `300`)
+
+#### Proxy
+
+- `PROXY_CHECK_INTERVAL` (`--proxy-check-interval`, default `300`)
+- `PROXY_CHECK_CONCURRENCY` (`--proxy-check-concurrency`, default `32`) - **fork feature**
+- `PROXY_CHECK_METHOD` (`--proxy-check-method`, `ip|status|download`, default `ip`)
+- `PROXY_IP_CHECK_URL` (`--proxy-ip-check-url`)
+- `PROXY_STATUS_CHECK_URL` (`--proxy-status-check-url`)
+- `PROXY_DOWNLOAD_URL` (`--proxy-download-url`)
+- `PROXY_DOWNLOAD_TIMEOUT` (`--proxy-download-timeout`, default `60`)
+- `PROXY_DOWNLOAD_MIN_SIZE` (`--proxy-download-min-size`, default `51200`)
+- `PROXY_TIMEOUT` (`--proxy-timeout`, default `30`)
+- `PROXY_RESOLVE_DOMAINS` (`--proxy-resolve-domains`, default `false`)
+- `SIMULATE_LATENCY` (`--simulate-latency`, default `true`)
+
+#### Xray
+
+- `XRAY_START_PORT` (`--xray-start-port`, default `10000`)
+- `XRAY_LOG_LEVEL` (`--xray-log-level`, `debug|info|warning|error|none`, default `none`)
+
+#### Metrics / API
+
+- `METRICS_HOST` (`--metrics-host`, default `0.0.0.0`)
+- `METRICS_PORT` (`--metrics-port`, default `2112`)
+- `METRICS_BASE_PATH` (`--metrics-base-path`, default `""`)
+- `METRICS_PROTECTED` (`--metrics-protected`, default `false`)
+- `METRICS_USERNAME` (`--metrics-username`)
+- `METRICS_PASSWORD` (`--metrics-password`)
+- `METRICS_INSTANCE` (`--metrics-instance`)
+- `METRICS_PUSH_URL` (`--metrics-push-url`, format: `https://user:pass@host:port`)
+
+#### Web
+
+- `WEB_SHOW_DETAILS` (`--web-show-details`, default `false`)
+- `WEB_PUBLIC` (`--web-public`, default `false`)
+- `WEB_CUSTOM_ASSETS_PATH` (`--web-custom-assets-path`)
+
+Constraint: `WEB_PUBLIC=true` requires `METRICS_PROTECTED=true`.
+
+#### Logging / run mode
+
+- `LOG_LEVEL` (`--log-level`, `debug|info|warn|error|none`, default `info`)
+- `LOG_FILE` (`--log-file`) - **fork feature**
+- `RUN_ONCE` (`--run-once`, default `false`)
+
+## Endpoints
+
+Default bind: `http://localhost:2112`.
+
+- `GET /health` - healthcheck
+- `GET /metrics` - Prometheus metrics
+- `GET /api/v1/status` - aggregated status
+- `GET /api/v1/proxies` - proxy list
+- `GET /api/v1/proxies/{stableID}` - proxy by ID
+- `GET /api/v1/public/proxies` - public-safe proxy view
+- `GET /api/v1/config` - effective runtime config
+- `GET /api/v1/system/info` - version/uptime
+- `GET /api/v1/system/ip` - current detected IP
+- `GET /api/v1/openapi.yaml` - OpenAPI spec
+- `GET /api/v1/docs` - Swagger UI
+
+### Remote subscription API (fork feature)
+
+Available when `SUBSCRIPTION_URL` uses a `file://` source (file or directory).
+
+- `GET /api/v1/subscriptions/remote` - get remote source state
+- `POST /api/v1/subscriptions/remote` - add URL(s)
+- `DELETE /api/v1/subscriptions/remote?id=<id|url>` - remove source
+- `POST /api/v1/subscriptions/remote/refresh` - force refresh
+- `PUT /api/v1/subscriptions/remote/interval` - set refresh interval
+
+Add source example:
+
+```bash
+curl -u admin:change-me \
+  -H "Content-Type: application/json" \
+  -X POST \
+  -d '{"urls":["https://example.com/sub1","https://example.com/sub2"]}' \
+  http://localhost:2112/api/v1/subscriptions/remote
+```
+
+## Check method guidance
+
+- `ip`: lowest overhead, good default.
+- `status`: stable HTTP-level availability check.
+- `download`: validates real transfer path and throughput.
+
+For large subscriptions, a typical baseline:
+
+- `PROXY_CHECK_METHOD=ip`
+- `PROXY_CHECK_INTERVAL=120..300`
+- `PROXY_CHECK_CONCURRENCY=32..128` (tune to CPU/network)
+
+## Web UI customization
+
+Set `WEB_CUSTOM_ASSETS_PATH` and place files in that directory:
+
+- `index.html` - full template override;
+- `logo.svg` - custom logo;
+- `favicon.ico` - custom favicon;
+- `custom.css` - extra style overrides;
+- any extra file is served at `/static/<filename>`.
+
+## Build and development
+
+```bash
+go test ./...
+go build ./...
+```
+
+Local debug run:
+
+```bash
+go run . \
+  --subscription-url="https://example.com/subscription" \
+  --log-level=debug
+```
+
+## Upstream compatibility
+
+- Most base ENV/API behavior remains upstream-compatible.
+- Migration from upstream usually requires no config rewrite unless using fork-only features.
+- For remote manager usage, ensure writable `file://` storage path.
+
+## Security
+
+Recommended production baseline:
+
+- set `METRICS_PROTECTED=true`;
+- set custom `METRICS_USERNAME` and `METRICS_PASSWORD`;
+- avoid `WEB_SHOW_DETAILS` on public deployments;
+- place service behind TLS reverse proxy (Nginx/Caddy/Traefik).
+
+## License
+
+Licensed under [GNU GPLv3](./LICENSE).
+
+## Credits
+
+- Original project: [kutovoys/xray-checker](https://github.com/kutovoys/xray-checker)
+- This repository maintains the fork and additional features.

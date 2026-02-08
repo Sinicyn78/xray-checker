@@ -1,54 +1,87 @@
-# Xray Checker
+# Xray Checker (Fork)
 
-[![GitHub Release](https://img.shields.io/github/v/release/kutovoys/xray-checker?style=flat&color=blue)](https://github.com/kutovoys/xray-checker/releases/latest)
-[![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/kutovoys/xray-checker/build-publish.yml)](https://github.com/kutovoys/xray-checker/actions/workflows/build-publish.yml)
-[![DockerHub](https://img.shields.io/badge/DockerHub-kutovoys%2Fxray--checker-blue)](https://hub.docker.com/r/kutovoys/xray-checker/)
-[![Documentation](https://img.shields.io/badge/docs-xray--checker.kutovoy.dev-blue)](https://xray-checker.kutovoy.dev/)
-[![Live Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://demo-xray-checker.kutovoy.dev/)
-[![Telegram Chat](https://img.shields.io/badge/Telegram-Chat-blue?logo=telegram)](https://t.me/+uZCGx_FRY0tiOGIy)
-[![GitHub License](https://img.shields.io/github/license/kutovoys/xray-checker?color=greeen)](https://github.com/kutovoys/xray-checker/blob/main/LICENSE)
-[![ru](https://img.shields.io/badge/lang-ru-blue)](https://github.com/kutovoys/xray-checker/blob/main/README_RU.md)
-[![en](https://img.shields.io/badge/lang-en-red)](https://github.com/kutovoys/xray-checker/blob/main/README.md)
+Форк проекта [kutovoys/xray-checker](https://github.com/kutovoys/xray-checker) с дополнительными функциями и исправлениями для продакшн-использования.
 
-Xray Checker - это инструмент для мониторинга доступности прокси-серверов с поддержкой протоколов VLESS, VMess, Trojan и Shadowsocks. Он автоматически тестирует соединения через Xray Core и предоставляет метрики для Prometheus, а также API-эндпоинты для интеграции с системами мониторинга.
+## О проекте
 
-<div align="center">
-  <img src=".github/screen/xray-checker.webp" alt="Dashboard Screenshot">
-</div>
+`xray-checker` проверяет доступность прокси-конфигураций (VLESS, VMess, Trojan, Shadowsocks) через Xray Core, публикует метрики Prometheus и предоставляет Web UI/API для мониторинга.
 
-> [!TIP]
-> **Попробуйте демо:** Посмотрите Xray Checker в действии на [demo-xray-checker.kutovoy.dev](https://demo-xray-checker.kutovoy.dev/)
+Основные сценарии:
 
-## 🚀 Основные возможности
+- мониторинг подписок VPN/Proxy в реальном времени;
+- публичная страница статуса для клиентов;
+- экспорт метрик в Prometheus + опциональный push в Pushgateway;
+- интеграция с Uptime Kuma и другими системами.
 
-- 🔍 Мониторинг работоспособности Xray-прокси серверов (VLESS, VMess, Trojan, Shadowsocks)
-- 🔄 Автоматическое обновление конфигурации из подписки (поддержка нескольких подписок)
-- 📊 Экспорт метрик в формате Prometheus с поддержкой Pushgateway
-- 🌐 REST API с документацией OpenAPI/Swagger
-- 🌓 Веб-интерфейс с темной/светлой темой
-- 🎨 Полная кастомизация веб-интерфейса (свой логотип, стили или весь шаблон)
-- 📄 Публичная страница статуса для VPN-сервисов (без аутентификации)
-- 📥 Эндпоинты для интеграции с системами мониторинга (Uptime Kuma и др.)
-- 🔒 Защита метрик и веб-интерфейса с помощью Basic Auth
-- 🐳 Поддержка Docker и Docker Compose
-- 🌍 Автоматическое управление geo-файлами (geoip.dat, geosite.dat)
-- 📝 Гибкая загрузка конфигурации:
-  - URL-подписки (base64, JSON)
-  - Share-ссылки (vless://, vmess://, trojan://, ss://)
-  - JSON-файлы конфигурации
-  - Папки с конфигурациями
+## Это форк: что важно знать
 
-Полный список возможностей доступен в [документации](https://xray-checker.kutovoy.dev/ru/intro/features).
+- Upstream: `https://github.com/kutovoys/xray-checker`
+- Этот репозиторий: `https://github.com/Sinicyn78/xray-checker`
+- В форке сохранена совместимость по базовой конфигурации, но добавлены форк-специфичные улучшения (см. ниже).
 
-## 🚀 Быстрый старт
+### Изменения форка относительно upstream
 
-### Docker
+- добавлен лимит параллельных проверок: `PROXY_CHECK_CONCURRENCY`;
+- добавлено логирование в файл: `LOG_FILE`;
+- добавлены удалённые источники подписок через API (добавление/удаление/обновление URL без ручного редактирования файла);
+- улучшена работа с `file://` директориями подписок и хранением состояния remote-источников;
+- исправлена логика привязки статусов к прокси по `StableID`;
+- улучшена обработка пустых/недоступных подписок;
+- улучшен fallback-рендеринг вкладки серверов в Web UI;
+- усилена валидация URL для remote-источников;
+- нормализованы некорректные значения stream security.
+
+## Возможности
+
+- поддержка протоколов: `vless`, `vmess`, `trojan`, `shadowsocks`;
+- загрузка конфигураций из нескольких источников одновременно;
+- форматы источников:
+  - URL подписки;
+  - base64 строка;
+  - `file://` JSON-файл;
+  - `folder://` папка с JSON-файлами;
+- методы проверки:
+  - `ip` (сравнение внешнего IP);
+  - `status` (проверка HTTP-ответа);
+  - `download` (проверка скачиванием файла);
+- метрики Prometheus:
+  - `xray_proxy_status`;
+  - `xray_proxy_latency_ms`;
+- Web UI + REST API + Swagger (`/api/v1/docs`);
+- публичный режим дашборда (`WEB_PUBLIC=true`);
+- Basic Auth для API/metrics;
+- кастомизация интерфейса через `WEB_CUSTOM_ASSETS_PATH`;
+- запуск в Docker и как обычный бинарник.
+
+## Архитектура (кратко)
+
+1. Источники подписок парсятся в набор proxy-конфигов.
+2. Генерируется `xray_config.json` и запускается Xray Core.
+3. Checker проверяет каждый прокси (параллельно с лимитом).
+4. Статусы и задержки публикуются в метрики и API.
+5. При обновлениях подписок конфигурация пересобирается автоматически.
+
+## Быстрый старт
+
+### Docker (минимум)
 
 ```bash
 docker run -d \
-  -e SUBSCRIPTION_URL=https://your-subscription-url/sub \
+  --name xray-checker \
+  -e SUBSCRIPTION_URL="https://example.com/subscription" \
   -p 2112:2112 \
-  kutovoys/xray-checker
+  <your-dockerhub-username>/xray-checker:latest
+```
+
+Если вы ещё не публиковали образ форка:
+
+```bash
+docker build -t xray-checker:local .
+docker run -d \
+  --name xray-checker \
+  -e SUBSCRIPTION_URL="https://example.com/subscription" \
+  -p 2112:2112 \
+  xray-checker:local
 ```
 
 ### Docker Compose
@@ -56,50 +89,186 @@ docker run -d \
 ```yaml
 services:
   xray-checker:
-    image: kutovoys/xray-checker
+    image: xray-checker:local
+    container_name: xray-checker
+    restart: unless-stopped
     environment:
-      - SUBSCRIPTION_URL=https://your-subscription-url/sub
+      SUBSCRIPTION_URL: "https://example.com/subscription"
+      PROXY_CHECK_METHOD: "ip"
+      PROXY_CHECK_INTERVAL: "300"
+      PROXY_CHECK_CONCURRENCY: "32"
+      METRICS_PROTECTED: "true"
+      METRICS_USERNAME: "admin"
+      METRICS_PASSWORD: "change-me"
     ports:
       - "2112:2112"
 ```
 
-Подробная документация по установке и настройке доступна на [xray-checker.kutovoy.dev](https://xray-checker.kutovoy.dev/ru/intro/quick-start)
+### Запуск бинарника
 
-## 📈 Статистика проекта
+```bash
+go build -o xray-checker .
+./xray-checker --subscription-url="https://example.com/subscription"
+```
 
-<a href="https://star-history.com/#kutovoys/xray-checker&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=kutovoys/xray-checker&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=kutovoys/xray-checker&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=kutovoys/xray-checker&type=Date" />
- </picture>
-</a>
+## Конфигурация
 
-## 🤝 Участие в разработке
+Приложение поддерживает CLI-флаги и переменные окружения. Обязательный параметр только один: источник подписки.
 
-Мы рады любому вкладу в развитие Xray Checker! Если вы хотите помочь:
+### Обязательные
 
-1. Сделайте форк репозитория
-2. Создайте ветку для ваших изменений
-3. Внесите изменения и протестируйте их
-4. Создайте Pull Request
+- `SUBSCRIPTION_URL` / `--subscription-url`
 
-Подробнее о том, как внести свой вклад, читайте в [руководстве для контрибьюторов](https://xray-checker.kutovoy.dev/ru/contributing/development-guide).
+Можно указать несколько источников:
 
-<p align="center">
-Спасибо всем контрибьюторам, которые помогли улучшить Xray Checker:
-</p>
-<p align="center">
-<a href="https://github.com/kutovoys/xray-checker/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=kutovoys/xray-checker" />
-</a>
-</p>
-<p align="center">
-  Сделано с помощью <a rel="noopener noreferrer" target="_blank" href="https://contrib.rocks">contrib.rocks</a>
-</p>
+- повторить `--subscription-url` несколько раз;
+- или передать значения через запятую в `SUBSCRIPTION_URL`.
 
----
+### Основные параметры
 
-## Рекомендация VPN
+#### Subscription
 
-Для безопасного и надежного доступа в интернет мы рекомендуем [BlancVPN](https://getblancvpn.com/pricing?promo=klugscl&ref=xc-readme). Используйте промокод `KLUGSCL` для получения скидки 15% на вашу подписку.
+- `SUBSCRIPTION_URL` (`--subscription-url`) - источник(и) конфигов
+- `SUBSCRIPTION_UPDATE` (`--subscription-update`, default `true`)
+- `SUBSCRIPTION_UPDATE_INTERVAL` (`--subscription-update-interval`, default `300`)
+
+#### Proxy
+
+- `PROXY_CHECK_INTERVAL` (`--proxy-check-interval`, default `300`)
+- `PROXY_CHECK_CONCURRENCY` (`--proxy-check-concurrency`, default `32`) - **фича форка**
+- `PROXY_CHECK_METHOD` (`--proxy-check-method`, `ip|status|download`, default `ip`)
+- `PROXY_IP_CHECK_URL` (`--proxy-ip-check-url`)
+- `PROXY_STATUS_CHECK_URL` (`--proxy-status-check-url`)
+- `PROXY_DOWNLOAD_URL` (`--proxy-download-url`)
+- `PROXY_DOWNLOAD_TIMEOUT` (`--proxy-download-timeout`, default `60`)
+- `PROXY_DOWNLOAD_MIN_SIZE` (`--proxy-download-min-size`, default `51200`)
+- `PROXY_TIMEOUT` (`--proxy-timeout`, default `30`)
+- `PROXY_RESOLVE_DOMAINS` (`--proxy-resolve-domains`, default `false`)
+- `SIMULATE_LATENCY` (`--simulate-latency`, default `true`)
+
+#### Xray
+
+- `XRAY_START_PORT` (`--xray-start-port`, default `10000`)
+- `XRAY_LOG_LEVEL` (`--xray-log-level`, `debug|info|warning|error|none`, default `none`)
+
+#### Metrics / API
+
+- `METRICS_HOST` (`--metrics-host`, default `0.0.0.0`)
+- `METRICS_PORT` (`--metrics-port`, default `2112`)
+- `METRICS_BASE_PATH` (`--metrics-base-path`, default `""`)
+- `METRICS_PROTECTED` (`--metrics-protected`, default `false`)
+- `METRICS_USERNAME` (`--metrics-username`)
+- `METRICS_PASSWORD` (`--metrics-password`)
+- `METRICS_INSTANCE` (`--metrics-instance`)
+- `METRICS_PUSH_URL` (`--metrics-push-url`, формат: `https://user:pass@host:port`)
+
+#### Web
+
+- `WEB_SHOW_DETAILS` (`--web-show-details`, default `false`)
+- `WEB_PUBLIC` (`--web-public`, default `false`)
+- `WEB_CUSTOM_ASSETS_PATH` (`--web-custom-assets-path`)
+
+Ограничение: `WEB_PUBLIC=true` требует `METRICS_PROTECTED=true`.
+
+#### Логи / режимы
+
+- `LOG_LEVEL` (`--log-level`, `debug|info|warn|error|none`, default `info`)
+- `LOG_FILE` (`--log-file`) - **фича форка**
+- `RUN_ONCE` (`--run-once`, default `false`)
+
+## Эндпоинты
+
+Базовый адрес: `http://localhost:2112`.
+
+- `GET /health` - healthcheck
+- `GET /metrics` - метрики Prometheus
+- `GET /api/v1/status` - агрегированный статус
+- `GET /api/v1/proxies` - список прокси
+- `GET /api/v1/proxies/{stableID}` - прокси по ID
+- `GET /api/v1/public/proxies` - публичный безопасный список
+- `GET /api/v1/config` - активная конфигурация
+- `GET /api/v1/system/info` - версия/uptime
+- `GET /api/v1/system/ip` - текущий определённый IP
+- `GET /api/v1/openapi.yaml` - OpenAPI спецификация
+- `GET /api/v1/docs` - Swagger UI
+
+### API удалённых подписок (фича форка)
+
+Доступно при использовании `SUBSCRIPTION_URL` с `file://` источником (файл или директория).
+
+- `GET /api/v1/subscriptions/remote` - состояние источников
+- `POST /api/v1/subscriptions/remote` - добавить URL(ы)
+- `DELETE /api/v1/subscriptions/remote?id=<id|url>` - удалить источник
+- `POST /api/v1/subscriptions/remote/refresh` - форс-обновление
+- `PUT /api/v1/subscriptions/remote/interval` - изменить интервал обновления
+
+Пример добавления источников:
+
+```bash
+curl -u admin:change-me \
+  -H "Content-Type: application/json" \
+  -X POST \
+  -d '{"urls":["https://example.com/sub1","https://example.com/sub2"]}' \
+  http://localhost:2112/api/v1/subscriptions/remote
+```
+
+## Рекомендации по методам проверки
+
+- `ip`: минимальная нагрузка, оптимально по умолчанию.
+- `status`: стабильная HTTP-проверка доступности.
+- `download`: проверка реального трафика и полезной нагрузки.
+
+Для больших подписок типовой базовый профиль:
+
+- `PROXY_CHECK_METHOD=ip`
+- `PROXY_CHECK_INTERVAL=120..300`
+- `PROXY_CHECK_CONCURRENCY=32..128` (подбирается по CPU/сети)
+
+## Кастомизация Web UI
+
+Укажите `WEB_CUSTOM_ASSETS_PATH` и положите файлы в директорию:
+
+- `index.html` - полная замена шаблона;
+- `logo.svg` - кастомный логотип;
+- `favicon.ico` - кастомный фавикон;
+- `custom.css` - дополнительные стили;
+- любые другие файлы будут доступны по `/static/<filename>`.
+
+## Сборка и разработка
+
+```bash
+go test ./...
+go build ./...
+```
+
+Локальный запуск с debug-логом:
+
+```bash
+go run . \
+  --subscription-url="https://example.com/subscription" \
+  --log-level=debug
+```
+
+## Совместимость с upstream
+
+- Базовое поведение ENV/API в основном совместимо с upstream.
+- Миграция с upstream обычно не требует переписывания конфигов, если не используются fork-only фичи.
+- Для remote-менеджера нужна доступная на запись директория `file://`.
+
+## Безопасность
+
+Минимальные рекомендации для продакшна:
+
+- включайте `METRICS_PROTECTED=true`;
+- задавайте свои `METRICS_USERNAME` и `METRICS_PASSWORD`;
+- не включайте `WEB_SHOW_DETAILS` на публичных инсталляциях;
+- ставьте сервис за TLS reverse-proxy (Nginx/Caddy/Traefik).
+
+## Лицензия
+
+Проект распространяется под лицензией [GNU GPLv3](./LICENSE).
+
+## Благодарности
+
+- Оригинальный проект: [kutovoys/xray-checker](https://github.com/kutovoys/xray-checker)
+- В этом репозитории поддерживается форк и его дополнительные возможности.
