@@ -2,8 +2,11 @@ package web
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+	"xray-checker/checker"
 	"xray-checker/models"
 )
 
@@ -73,6 +76,32 @@ func TestSelectTopBLByLatencyLimit(t *testing.T) {
 	}
 	if got[9].Name != "BL Node 09" {
 		t.Fatalf("expected tenth proxy BL Node 09, got %s", got[9].Name)
+	}
+}
+
+func TestAPITopBLSubscriptionHandlerToken(t *testing.T) {
+	pc := checker.NewProxyChecker(nil, 10000, "http://127.0.0.1:1", 1, "http://example.com", "", 1, 1, "status", 1)
+	handler := APITopBLSubscriptionHandler(pc, "super-secret-token")
+
+	reqNoToken := httptest.NewRequest(http.MethodGet, "/api/v1/public/subscriptions/top-bl", nil)
+	recNoToken := httptest.NewRecorder()
+	handler.ServeHTTP(recNoToken, reqNoToken)
+	if recNoToken.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 without token, got %d", recNoToken.Code)
+	}
+
+	reqBadToken := httptest.NewRequest(http.MethodGet, "/api/v1/public/subscriptions/top-bl?token=bad", nil)
+	recBadToken := httptest.NewRecorder()
+	handler.ServeHTTP(recBadToken, reqBadToken)
+	if recBadToken.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 with bad token, got %d", recBadToken.Code)
+	}
+
+	reqGoodToken := httptest.NewRequest(http.MethodGet, "/api/v1/public/subscriptions/top-bl?token=super-secret-token", nil)
+	recGoodToken := httptest.NewRecorder()
+	handler.ServeHTTP(recGoodToken, reqGoodToken)
+	if recGoodToken.Code != http.StatusOK {
+		t.Fatalf("expected 200 with valid token, got %d", recGoodToken.Code)
 	}
 }
 

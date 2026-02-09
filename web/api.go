@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/subtle"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
@@ -360,11 +361,18 @@ func APIDocsHandler() http.HandlerFunc {
 }
 
 // APITopBLSubscriptionHandler returns base64-encoded subscription with top 10 fastest BL configs.
-func APITopBLSubscriptionHandler(proxyChecker *checker.ProxyChecker) http.HandlerFunc {
+func APITopBLSubscriptionHandler(proxyChecker *checker.ProxyChecker, requiredToken string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
+		}
+		if strings.TrimSpace(requiredToken) != "" {
+			providedToken := r.URL.Query().Get("token")
+			if !secureTokenEquals(providedToken, requiredToken) {
+				http.NotFound(w, r)
+				return
+			}
 		}
 
 		selected := selectTopBLByLatency(proxyChecker.GetProxies(), proxyChecker.GetProxyStatusByStableID, 10)
@@ -384,6 +392,13 @@ func APITopBLSubscriptionHandler(proxyChecker *checker.ProxyChecker) http.Handle
 		w.Header().Set("X-Subscription-Configs", fmt.Sprintf("%d", len(links)))
 		_, _ = w.Write([]byte(encoded))
 	}
+}
+
+func secureTokenEquals(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 func selectTopBLByLatency(
