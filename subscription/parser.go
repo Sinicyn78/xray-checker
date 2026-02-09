@@ -281,7 +281,7 @@ func (p *Parser) parseRawData(rawData []byte, sourcePath, subName string) ([]*mo
 	return nil, fmt.Errorf("no valid proxy configurations found")
 }
 
-func (p *Parser) parseShareLinksBulk(cleanedData []byte, originalData map[string]*originalLinkData, subName string) (*ParseResult, error) {
+func (p *Parser) parseShareLinksBulk(cleanedData []byte, originalData map[string][]*originalLinkData, subName string) (*ParseResult, error) {
 	base64Data := base64.StdEncoding.EncodeToString(cleanedData)
 	resultBase64 := libXray.ConvertShareLinksToXrayJson(base64Data)
 	resultBytes, err := base64.StdEncoding.DecodeString(resultBase64)
@@ -485,7 +485,7 @@ func (p *Parser) cleanEmptyLines(data []byte) []byte {
 	return []byte(strings.Join(cleanLines, "\n"))
 }
 
-func (p *Parser) parseShareLinksIndividually(data []byte, originalData map[string]*originalLinkData) ([]*models.ProxyConfig, error) {
+func (p *Parser) parseShareLinksIndividually(data []byte, originalData map[string][]*originalLinkData) ([]*models.ProxyConfig, error) {
 	decoded := p.tryDecodeBase64(data)
 	lines := strings.Split(string(decoded), "\n")
 
@@ -729,33 +729,35 @@ func (p *Parser) isPrintableString(s string) bool {
 	return true
 }
 
-func (p *Parser) parseOriginalLinks(rawData []byte, sourcePath string) map[string]*originalLinkData {
-	result := make(map[string]*originalLinkData)
+func (p *Parser) parseOriginalLinks(rawData []byte, sourcePath string) map[string][]*originalLinkData {
+	result := make(map[string][]*originalLinkData)
 
 	decoded := p.tryDecodeBase64(rawData)
 
 	lines := strings.Split(string(decoded), "\n")
 	bom := string([]byte{0xEF, 0xBB, 0xBF})
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		line = strings.TrimPrefix(line, bom)
-		if line == "" {
+		originalLine := strings.TrimRight(line, "\r")
+
+		trimmed := strings.TrimSpace(originalLine)
+		trimmed = strings.TrimPrefix(trimmed, bom)
+		if trimmed == "" {
 			continue
 		}
 
-		data := p.parseShareLink(line)
+		data := p.parseShareLink(trimmed)
 		if data != nil {
 			key := fmt.Sprintf("%s:%d", data.Server, data.Port)
-			result[key] = &originalLinkData{
+			result[key] = append(result[key], &originalLinkData{
 				Name:          data.Name,
 				Encryption:    data.Encryption,
 				Type:          data.Type,
 				Path:          data.Path,
 				Host:          data.Host,
 				AllowInsecure: data.AllowInsecure,
-				RawLine:       line,
+				RawLine:       originalLine,
 				SourcePath:    sourcePath,
-			}
+			})
 		}
 	}
 
@@ -903,7 +905,7 @@ func (p *Parser) parseVMessLink(link string) *parsedLink {
 	return result
 }
 
-func (p *Parser) convertOutbound(raw json.RawMessage, index int, originalData map[string]*originalLinkData) (*models.ProxyConfig, error) {
+func (p *Parser) convertOutbound(raw json.RawMessage, index int, originalData map[string][]*originalLinkData) (*models.ProxyConfig, error) {
 	var baseOutbound struct {
 		Protocol       string                 `json:"protocol"`
 		Tag            string                 `json:"tag"`
@@ -1082,7 +1084,14 @@ func (p *Parser) convertOutbound(raw json.RawMessage, index int, originalData ma
 	}
 
 	key := fmt.Sprintf("%s:%d", pc.Server, pc.Port)
-	if orig, ok := originalData[key]; ok {
+	if candidates := originalData[key]; len(candidates) > 0 {
+		orig := candidates[0]
+		if len(candidates) == 1 {
+			delete(originalData, key)
+		} else {
+			originalData[key] = candidates[1:]
+		}
+
 		if pc.Encryption == "" || pc.Encryption == "none" {
 			if orig.Encryption != "" {
 				pc.Encryption = orig.Encryption

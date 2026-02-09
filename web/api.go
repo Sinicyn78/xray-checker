@@ -378,11 +378,10 @@ func APITopBLSubscriptionHandler(proxyChecker *checker.ProxyChecker, requiredTok
 		selected := selectTopBLByLatency(proxyChecker.GetProxies(), proxyChecker.GetProxyStatusByStableID, 10)
 		links := make([]string, 0, len(selected))
 		for _, proxy := range selected {
-			link := strings.TrimSpace(proxy.SourceLine)
-			if link == "" {
+			if proxy.SourceLine == "" {
 				continue
 			}
-			links = append(links, link)
+			links = append(links, proxy.SourceLine)
 		}
 
 		payload := strings.Join(links, "\n")
