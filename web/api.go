@@ -2,9 +2,11 @@ package web
 
 import (
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 	"xray-checker/checker"
@@ -86,6 +88,11 @@ type RemoteStateResponse struct {
 	IntervalSeconds int                `json:"intervalSeconds"`
 	DownloadDir     string             `json:"downloadDir"`
 	Sources         []RemoteSourceInfo `json:"sources"`
+}
+
+type rankedProxy struct {
+	proxy   *models.ProxyConfig
+	latency time.Duration
 }
 
 func writeJSON(w http.ResponseWriter, data interface{}) {
@@ -350,6 +357,91 @@ func APIDocsHandler() http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write([]byte(swaggerUIHTML))
 	}
+}
+
+// APITopBLSubscriptionHandler returns base64-encoded subscription with top 10 fastest BL configs.
+func APITopBLSubscriptionHandler(proxyChecker *checker.ProxyChecker) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		selected := selectTopBLByLatency(proxyChecker.GetProxies(), proxyChecker.GetProxyStatusByStableID, 10)
+		links := make([]string, 0, len(selected))
+		for _, proxy := range selected {
+			link := strings.TrimSpace(proxy.SourceLine)
+			if link == "" {
+				continue
+			}
+			links = append(links, link)
+		}
+
+		payload := strings.Join(links, "\n")
+		encoded := base64.StdEncoding.EncodeToString([]byte(payload))
+
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("X-Subscription-Configs", fmt.Sprintf("%d", len(links)))
+		_, _ = w.Write([]byte(encoded))
+	}
+}
+
+func selectTopBLByLatency(
+	proxies []*models.ProxyConfig,
+	statusFn func(string) (bool, time.Duration, error),
+	limit int,
+) []*models.ProxyConfig {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	ranked := make([]rankedProxy, 0, len(proxies))
+	for _, proxy := range proxies {
+		if proxy == nil || strings.TrimSpace(proxy.SourceLine) == "" {
+			continue
+		}
+		if !strings.Contains(strings.ToUpper(proxy.Name), "BL") {
+			continue
+		}
+		if proxy.StableID == "" {
+			proxy.StableID = proxy.GenerateStableID()
+		}
+
+		online, latency, err := statusFn(proxy.StableID)
+		if err != nil || !online {
+			continue
+		}
+
+		ranked = append(ranked, rankedProxy{
+			proxy:   proxy,
+			latency: latency,
+		})
+	}
+
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].latency != ranked[j].latency {
+			return ranked[i].latency < ranked[j].latency
+		}
+
+		leftName := strings.ToLower(strings.TrimSpace(ranked[i].proxy.Name))
+		rightName := strings.ToLower(strings.TrimSpace(ranked[j].proxy.Name))
+		if leftName != rightName {
+			return leftName < rightName
+		}
+
+		return ranked[i].proxy.StableID < ranked[j].proxy.StableID
+	})
+
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+
+	selected := make([]*models.ProxyConfig, 0, len(ranked))
+	for _, item := range ranked {
+		selected = append(selected, item.proxy)
+	}
+
+	return selected
 }
 
 func APIRemoteSourcesHandler(manager *subscription.RemoteManager) http.HandlerFunc {

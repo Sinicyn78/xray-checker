@@ -199,6 +199,7 @@ func main() {
 	mux.Handle("/health", web.HealthHandler())
 	mux.Handle("/static/", web.StaticHandler())
 	mux.Handle("/api/v1/public/proxies", web.APIPublicProxiesHandler(proxyChecker))
+	mux.Handle("/api/v1/public/subscriptions/top-bl", web.APITopBLSubscriptionHandler(proxyChecker))
 
 	web.RegisterConfigEndpoints(*proxyConfigs, proxyChecker, config.CLIConfig.Xray.StartPort)
 
