@@ -378,16 +378,21 @@ func APITopBLSubscriptionHandler(proxyChecker *checker.ProxyChecker, requiredTok
 		selected := selectTopBLByLatency(proxyChecker.GetProxies(), proxyChecker.GetProxyStatusByStableID, 10)
 		links := make([]string, 0, len(selected))
 		for _, proxy := range selected {
-			if proxy.SourceLine == "" {
+			line := sanitizeConfig(proxy.SourceLine)
+			if line == "" {
 				continue
 			}
-			links = append(links, proxy.SourceLine)
+			// Keep subscription output aligned with what UI shows/copies.
+			links = append(links, line)
 		}
 
 		payload := strings.Join(links, "\n")
 		encoded := base64.StdEncoding.EncodeToString([]byte(payload))
 
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
 		w.Header().Set("X-Subscription-Configs", fmt.Sprintf("%d", len(links)))
 		_, _ = w.Write([]byte(encoded))
 	}
