@@ -409,7 +409,7 @@ func selectTopBLByLatency(
 		limit = 10
 	}
 
-	ranked := make([]rankedProxy, 0, len(proxies))
+	uniqueByKey := make(map[string]rankedProxy, len(proxies))
 	for _, proxy := range proxies {
 		if proxy == nil || strings.TrimSpace(proxy.SourceLine) == "" {
 			continue
@@ -426,10 +426,24 @@ func selectTopBLByLatency(
 			continue
 		}
 
-		ranked = append(ranked, rankedProxy{
+		candidate := rankedProxy{
 			proxy:   proxy,
 			latency: latency,
-		})
+		}
+
+		key := dedupKey(proxy)
+		if existing, ok := uniqueByKey[key]; ok {
+			if isBetterCandidate(candidate, existing) {
+				uniqueByKey[key] = candidate
+			}
+			continue
+		}
+		uniqueByKey[key] = candidate
+	}
+
+	ranked := make([]rankedProxy, 0, len(uniqueByKey))
+	for _, item := range uniqueByKey {
+		ranked = append(ranked, item)
 	}
 
 	sort.Slice(ranked, func(i, j int) bool {
@@ -456,6 +470,33 @@ func selectTopBLByLatency(
 	}
 
 	return selected
+}
+
+func dedupKey(proxy *models.ProxyConfig) string {
+	protocol := strings.ToLower(strings.TrimSpace(proxy.Protocol))
+	if id := strings.TrimSpace(proxy.UUID); id != "" {
+		return protocol + "|uuid|" + id
+	}
+	if pw := strings.TrimSpace(proxy.Password); pw != "" {
+		return protocol + "|password|" + pw
+	}
+	if sid := strings.TrimSpace(proxy.StableID); sid != "" {
+		return protocol + "|stable|" + sid
+	}
+	return protocol + "|name|" + strings.ToLower(strings.TrimSpace(proxy.Name))
+}
+
+func isBetterCandidate(left, right rankedProxy) bool {
+	if left.latency != right.latency {
+		return left.latency < right.latency
+	}
+
+	leftName := strings.ToLower(strings.TrimSpace(left.proxy.Name))
+	rightName := strings.ToLower(strings.TrimSpace(right.proxy.Name))
+	if leftName != rightName {
+		return leftName < rightName
+	}
+	return left.proxy.StableID < right.proxy.StableID
 }
 
 func APIRemoteSourcesHandler(manager *subscription.RemoteManager) http.HandlerFunc {

@@ -79,6 +79,36 @@ func TestSelectTopBLByLatencyLimit(t *testing.T) {
 	}
 }
 
+func TestSelectTopBLByLatencyDeduplicatesByUUID(t *testing.T) {
+	fast := newTestProxy("BL Fast", "vless://fast")
+	slow := newTestProxy("BL Slow", "vless://slow")
+	other := newTestProxy("BL Other", "vless://other")
+
+	// Same UUID means same logical node from client perspective; keep only the fastest one.
+	slow.UUID = fast.UUID
+	slow.StableID = slow.GenerateStableID()
+
+	status := map[string]time.Duration{
+		fast.StableID: 90 * time.Millisecond,
+		slow.StableID: 250 * time.Millisecond,
+		other.StableID: 120 * time.Millisecond,
+	}
+
+	got := selectTopBLByLatency([]*models.ProxyConfig{slow, fast, other}, func(stableID string) (bool, time.Duration, error) {
+		return true, status[stableID], nil
+	}, 10)
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 proxies after dedup, got %d", len(got))
+	}
+	if got[0].StableID != fast.StableID {
+		t.Fatalf("expected fastest duplicate to be selected, got %s", got[0].Name)
+	}
+	if got[1].StableID != other.StableID {
+		t.Fatalf("expected second proxy to be BL Other, got %s", got[1].Name)
+	}
+}
+
 func TestAPITopBLSubscriptionHandlerToken(t *testing.T) {
 	pc := checker.NewProxyChecker(nil, 10000, "http://127.0.0.1:1", 1, "http://example.com", "", 1, 1, "status", 1)
 	handler := APITopBLSubscriptionHandler(pc, "super-secret-token")
