@@ -126,24 +126,40 @@ type libXrayXhttpSettings struct {
 }
 
 type originalLinkData struct {
+	Protocol      string
 	Name          string
+	UUID          string
+	Password      string
+	Method        string
 	Encryption    string
+	Security      string
 	Type          string
 	Path          string
 	Host          string
+	SNI           string
+	PublicKey     string
+	ShortID       string
 	AllowInsecure bool
 	RawLine       string
 	SourcePath    string
 }
 
 type parsedLink struct {
+	Protocol      string
 	Server        string
 	Port          int
 	Name          string
+	UUID          string
+	Password      string
+	Method        string
 	Encryption    string
+	Security      string
 	Type          string
 	Path          string
 	Host          string
+	SNI           string
+	PublicKey     string
+	ShortID       string
 	AllowInsecure bool
 }
 
@@ -749,11 +765,19 @@ func (p *Parser) parseOriginalLinks(rawData []byte, sourcePath string) map[strin
 		if data != nil {
 			key := fmt.Sprintf("%s:%d", data.Server, data.Port)
 			result[key] = append(result[key], &originalLinkData{
+				Protocol:      data.Protocol,
 				Name:          data.Name,
+				UUID:          data.UUID,
+				Password:      data.Password,
+				Method:        data.Method,
 				Encryption:    data.Encryption,
+				Security:      data.Security,
 				Type:          data.Type,
 				Path:          data.Path,
 				Host:          data.Host,
+				SNI:           data.SNI,
+				PublicKey:     data.PublicKey,
+				ShortID:       data.ShortID,
 				AllowInsecure: data.AllowInsecure,
 				RawLine:       originalLine,
 				SourcePath:    sourcePath,
@@ -779,6 +803,7 @@ func (p *Parser) parseShareLink(link string) *parsedLink {
 	}
 
 	result := &parsedLink{
+		Protocol: u.Scheme,
 		Name: u.Fragment,
 	}
 
@@ -810,9 +835,31 @@ func (p *Parser) parseShareLink(link string) *parsedLink {
 	query := u.Query()
 	result.Type = query.Get("type")
 	result.Encryption = query.Get("encryption")
+	result.Security = query.Get("security")
 	result.Path = query.Get("path")
 	result.Host = query.Get("host")
+	result.SNI = query.Get("sni")
+	result.PublicKey = query.Get("pbk")
+	result.ShortID = query.Get("sid")
 	result.AllowInsecure = query.Get("allowInsecure") == "1" || query.Get("allowInsecure") == "true"
+
+	user := u.User.Username()
+	switch u.Scheme {
+	case "vless", "vmess":
+		result.UUID = user
+	case "trojan":
+		result.Password = user
+	case "ss":
+		if result.Method == "" {
+			if method, pass, ok := strings.Cut(user, ":"); ok {
+				result.Method = method
+				result.Password = pass
+			}
+		}
+	}
+	if method := query.Get("method"); method != "" {
+		result.Method = method
+	}
 
 	return result
 }
@@ -871,12 +918,16 @@ func (p *Parser) parseVMessLink(link string) *parsedLink {
 	}
 
 	result := &parsedLink{}
+	result.Protocol = "vmess"
 
 	if ps, ok := vmess["ps"].(string); ok {
 		result.Name = ps
 	}
 	if add, ok := vmess["add"].(string); ok {
 		result.Server = add
+	}
+	if id, ok := vmess["id"].(string); ok {
+		result.UUID = id
 	}
 
 	switch port := vmess["port"].(type) {
@@ -894,6 +945,15 @@ func (p *Parser) parseVMessLink(link string) *parsedLink {
 
 	if net, ok := vmess["net"].(string); ok {
 		result.Type = net
+	}
+	if tls, ok := vmess["tls"].(string); ok {
+		result.Security = tls
+	}
+	if scy, ok := vmess["scy"].(string); ok {
+		result.Encryption = scy
+	}
+	if sni, ok := vmess["sni"].(string); ok {
+		result.SNI = sni
 	}
 	if host, ok := vmess["host"].(string); ok {
 		result.Host = host
@@ -1085,11 +1145,14 @@ func (p *Parser) convertOutbound(raw json.RawMessage, index int, originalData ma
 
 	key := fmt.Sprintf("%s:%d", pc.Server, pc.Port)
 	if candidates := originalData[key]; len(candidates) > 0 {
-		orig := candidates[0]
-		if len(candidates) == 1 {
+		matchIdx := pickBestOriginalCandidate(candidates, pc)
+		orig := candidates[matchIdx]
+
+		candidates = append(candidates[:matchIdx], candidates[matchIdx+1:]...)
+		if len(candidates) == 0 {
 			delete(originalData, key)
 		} else {
-			originalData[key] = candidates[1:]
+			originalData[key] = candidates
 		}
 
 		if pc.Encryption == "" || pc.Encryption == "none" {
@@ -1115,6 +1178,64 @@ func (p *Parser) convertOutbound(raw json.RawMessage, index int, originalData ma
 	pc.StableID = pc.GenerateStableID()
 
 	return pc, nil
+}
+
+func pickBestOriginalCandidate(candidates []*originalLinkData, pc *models.ProxyConfig) int {
+	if len(candidates) == 0 {
+		return 0
+	}
+
+	bestIdx := 0
+	bestScore := -1
+	for i, c := range candidates {
+		score := 0
+		if strings.EqualFold(c.Protocol, pc.Protocol) {
+			score += 30
+		}
+		if c.UUID != "" && c.UUID == pc.UUID {
+			score += 90
+		}
+		if c.Password != "" && c.Password == pc.Password {
+			score += 90
+		}
+		if c.Method != "" && c.Method == pc.Method {
+			score += 20
+		}
+		if c.Security != "" && strings.EqualFold(c.Security, pc.Security) {
+			score += 20
+		}
+		if c.Type != "" && strings.EqualFold(c.Type, pc.Type) {
+			score += 15
+		}
+		if c.SNI != "" && strings.EqualFold(c.SNI, pc.SNI) {
+			score += 15
+		}
+		if c.PublicKey != "" && c.PublicKey == pc.PublicKey {
+			score += 15
+		}
+		if c.ShortID != "" && c.ShortID == pc.ShortID {
+			score += 12
+		}
+		if c.Host != "" && c.Host == pc.Host {
+			score += 10
+		}
+		if c.Path != "" && c.Path == pc.Path {
+			score += 10
+		}
+		if c.Encryption != "" && strings.EqualFold(c.Encryption, pc.Encryption) {
+			score += 8
+		}
+		if c.Name != "" && c.Name == pc.Name {
+			score += 4
+		}
+
+		if score > bestScore {
+			bestScore = score
+			bestIdx = i
+		}
+	}
+
+	return bestIdx
 }
 
 func (p *Parser) tryDecodeBase64(data []byte) []byte {
