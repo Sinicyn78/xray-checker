@@ -95,15 +95,48 @@ type RemoteStateResponse struct {
 type rankedProxy struct {
 	proxy   *models.ProxyConfig
 	latency time.Duration
+	key     string
+}
+
+type keyStatusCounts struct {
+	online  int
+	offline int
+	na      int
 }
 
 type topSelectionResult struct {
-	proxies       []*models.ProxyConfig
+	proxies       []rankedProxy
 	totalBL       int
 	naCount       int
 	onlineCount   int
 	offlineCount  int
+	keyStates     map[string]keyStatusCounts
 }
+
+type activeEntry struct {
+	item      rankedProxy
+	addedAt   time.Time
+	badStreak int
+}
+
+type stableTopBLSelector struct {
+	limit         int
+	mu            sync.Mutex
+	emaByKey      map[string]time.Duration
+	active        map[string]*activeEntry
+	published     []string
+	lastPublished time.Time
+	hadEmergency  bool
+}
+
+const (
+	topBLBatchInterval  = 2 * time.Hour
+	topBLMinHold        = 2 * time.Hour
+	topBLEMAAlpha       = 0.3
+	topBLReplaceMinMs   = 50 * time.Millisecond
+	topBLReplaceMinGain = 0.20
+	topBLBadStreakLimit = 2
+)
 
 func writeJSON(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -371,8 +404,7 @@ func APIDocsHandler() http.HandlerFunc {
 
 // APITopBLSubscriptionHandler returns base64-encoded subscription with top 10 fastest BL configs.
 func APITopBLSubscriptionHandler(proxyChecker *checker.ProxyChecker, requiredToken string) http.HandlerFunc {
-	var mu sync.Mutex
-	lastGoodLinks := make([]string, 0)
+	selector := newStableTopBLSelector(10)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -387,20 +419,7 @@ func APITopBLSubscriptionHandler(proxyChecker *checker.ProxyChecker, requiredTok
 			}
 		}
 
-		selection := selectTopBLByLatency(proxyChecker.GetProxies(), proxyChecker.GetProxyStatusByStableID, 10)
-		links := make([]string, 0, len(selection.proxies))
-		for _, proxy := range selection.proxies {
-			line := sanitizeConfig(proxy.SourceLine)
-			if line == "" {
-				continue
-			}
-			// Keep subscription output aligned with what UI shows/copies.
-			links = append(links, line)
-		}
-
-		mu.Lock()
-		links, lastGoodLinks = resolveSubscriptionLinks(links, selection, lastGoodLinks)
-		mu.Unlock()
+		links := selector.Next(proxyChecker.GetProxies(), proxyChecker.GetProxyStatusByStableID, time.Now())
 
 		payload := strings.Join(links, "\n")
 		encoded := base64.StdEncoding.EncodeToString([]byte(payload))
@@ -421,6 +440,186 @@ func secureTokenEquals(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
+func newStableTopBLSelector(limit int) *stableTopBLSelector {
+	if limit <= 0 {
+		limit = 10
+	}
+	return &stableTopBLSelector{
+		limit:    limit,
+		emaByKey: make(map[string]time.Duration),
+		active:   make(map[string]*activeEntry),
+	}
+}
+
+func (s *stableTopBLSelector) Next(
+	proxies []*models.ProxyConfig,
+	statusFn func(string) (bool, time.Duration, error),
+	now time.Time,
+) []string {
+	selection := selectTopBLByLatency(proxies, statusFn, len(proxies))
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Keep previous published list when all BL metrics are n/a.
+	if selection.totalBL > 0 && selection.naCount == selection.totalBL && len(s.published) > 0 {
+		return append([]string(nil), s.published...)
+	}
+
+	ranked := s.applyEMA(selection.proxies)
+	s.reconcileActive(ranked, selection.keyStates, now)
+
+	activeRanked := s.activeRanked()
+	proposedLinks := linksFromRanked(activeRanked)
+	if len(proposedLinks) == 0 && len(s.published) > 0 {
+		return append([]string(nil), s.published...)
+	}
+
+	emergencyChange := s.hadEmergency
+	s.hadEmergency = false
+	shouldPublish := len(s.published) == 0 ||
+		now.Sub(s.lastPublished) >= topBLBatchInterval ||
+		emergencyChange
+
+	if shouldPublish && len(proposedLinks) > 0 {
+		s.published = append(s.published[:0], proposedLinks...)
+		s.lastPublished = now
+	}
+
+	return append([]string(nil), s.published...)
+}
+
+func (s *stableTopBLSelector) applyEMA(proxies []rankedProxy) []rankedProxy {
+	ranked := make([]rankedProxy, 0, len(proxies))
+	for _, p := range proxies {
+		key := p.key
+		rawMs := p.latency
+		prev, ok := s.emaByKey[key]
+		var ema time.Duration
+		if !ok || prev <= 0 {
+			ema = rawMs
+		} else {
+			ema = time.Duration((1.0-topBLEMAAlpha)*float64(prev) + topBLEMAAlpha*float64(rawMs))
+		}
+		s.emaByKey[key] = ema
+
+		ranked = append(ranked, rankedProxy{
+			proxy:   p.proxy,
+			latency: ema,
+			key:     key,
+		})
+	}
+
+	sort.Slice(ranked, func(i, j int) bool { return isBetterCandidate(ranked[i], ranked[j]) })
+	return ranked
+}
+
+func (s *stableTopBLSelector) reconcileActive(ranked []rankedProxy, keyStates map[string]keyStatusCounts, now time.Time) {
+	byKey := make(map[string]rankedProxy, len(ranked))
+	for _, r := range ranked {
+		if _, exists := byKey[r.key]; !exists {
+			byKey[r.key] = r
+		}
+	}
+
+	for key, entry := range s.active {
+		st := keyStates[key]
+		if st.online > 0 {
+			entry.badStreak = 0
+		} else if st.offline > 0 || st.na > 0 {
+			entry.badStreak++
+		} else {
+			entry.badStreak++
+		}
+		if candidate, ok := byKey[key]; ok {
+			entry.item = candidate
+		}
+		if entry.badStreak >= topBLBadStreakLimit {
+			delete(s.active, key)
+			s.hadEmergency = true
+		}
+	}
+
+	for _, c := range ranked {
+		if len(s.active) >= s.limit {
+			break
+		}
+		if _, exists := s.active[c.key]; exists {
+			continue
+		}
+		s.active[c.key] = &activeEntry{item: c, addedAt: now}
+	}
+
+	for _, c := range ranked {
+		if _, exists := s.active[c.key]; exists {
+			continue
+		}
+		worstKey, worstEntry := s.findWorstReplaceable(now)
+		if worstEntry == nil {
+			break
+		}
+		if !isSignificantImprovement(c.latency, worstEntry.item.latency) {
+			continue
+		}
+		delete(s.active, worstKey)
+		s.active[c.key] = &activeEntry{item: c, addedAt: now}
+	}
+}
+
+func (s *stableTopBLSelector) findWorstReplaceable(now time.Time) (string, *activeEntry) {
+	var worstKey string
+	var worstEntry *activeEntry
+	for key, entry := range s.active {
+		holdPassed := now.Sub(entry.addedAt) >= topBLMinHold
+		if !holdPassed && entry.badStreak < topBLBadStreakLimit {
+			continue
+		}
+		if worstEntry == nil || isBetterCandidate(worstEntry.item, entry.item) {
+			worstKey = key
+			worstEntry = entry
+		}
+	}
+	return worstKey, worstEntry
+}
+
+func isSignificantImprovement(candidate, current time.Duration) bool {
+	if candidate >= current {
+		return false
+	}
+	if current-candidate >= topBLReplaceMinMs {
+		return true
+	}
+	if current <= 0 {
+		return false
+	}
+	ratioGain := float64(current-candidate) / float64(current)
+	return ratioGain >= topBLReplaceMinGain
+}
+
+func (s *stableTopBLSelector) activeRanked() []rankedProxy {
+	ranked := make([]rankedProxy, 0, len(s.active))
+	for _, entry := range s.active {
+		ranked = append(ranked, entry.item)
+	}
+	sort.Slice(ranked, func(i, j int) bool { return isBetterCandidate(ranked[i], ranked[j]) })
+	if len(ranked) > s.limit {
+		ranked = ranked[:s.limit]
+	}
+	return ranked
+}
+
+func linksFromRanked(ranked []rankedProxy) []string {
+	links := make([]string, 0, len(ranked))
+	for _, item := range ranked {
+		line := sanitizeConfig(item.proxy.SourceLine)
+		if line == "" {
+			continue
+		}
+		links = append(links, line)
+	}
+	return links
+}
+
 func selectTopBLByLatency(
 	proxies []*models.ProxyConfig,
 	statusFn func(string) (bool, time.Duration, error),
@@ -430,7 +629,9 @@ func selectTopBLByLatency(
 		limit = 10
 	}
 
-	result := topSelectionResult{}
+	result := topSelectionResult{
+		keyStates: make(map[string]keyStatusCounts),
+	}
 	uniqueByKey := make(map[string]rankedProxy, len(proxies))
 	for _, proxy := range proxies {
 		if proxy == nil || strings.TrimSpace(proxy.SourceLine) == "" {
@@ -443,24 +644,34 @@ func selectTopBLByLatency(
 		if proxy.StableID == "" {
 			proxy.StableID = proxy.GenerateStableID()
 		}
+		key := dedupKey(proxy)
 
 		online, latency, err := statusFn(proxy.StableID)
 		if err != nil {
 			result.naCount++
+			st := result.keyStates[key]
+			st.na++
+			result.keyStates[key] = st
 			continue
 		}
 		if !online {
 			result.offlineCount++
+			st := result.keyStates[key]
+			st.offline++
+			result.keyStates[key] = st
 			continue
 		}
 		result.onlineCount++
+		st := result.keyStates[key]
+		st.online++
+		result.keyStates[key] = st
 
 		candidate := rankedProxy{
 			proxy:   proxy,
 			latency: latency,
+			key:     key,
 		}
 
-		key := dedupKey(proxy)
 		if existing, ok := uniqueByKey[key]; ok {
 			if isBetterCandidate(candidate, existing) {
 				uniqueByKey[key] = candidate
@@ -493,12 +704,7 @@ func selectTopBLByLatency(
 		ranked = ranked[:limit]
 	}
 
-	selected := make([]*models.ProxyConfig, 0, len(ranked))
-	for _, item := range ranked {
-		selected = append(selected, item.proxy)
-	}
-
-	result.proxies = selected
+	result.proxies = ranked
 	return result
 }
 
@@ -527,24 +733,6 @@ func isBetterCandidate(left, right rankedProxy) bool {
 		return leftName < rightName
 	}
 	return left.proxy.StableID < right.proxy.StableID
-}
-
-func resolveSubscriptionLinks(
-	currentLinks []string,
-	selection topSelectionResult,
-	lastGoodLinks []string,
-) ([]string, []string) {
-	// All BL proxies are n/a in this iteration: keep previous subscription list.
-	if selection.totalBL > 0 && selection.naCount == selection.totalBL && len(lastGoodLinks) > 0 {
-		return append([]string(nil), lastGoodLinks...), lastGoodLinks
-	}
-
-	if len(currentLinks) > 0 {
-		newLast := append(lastGoodLinks[:0], currentLinks...)
-		return currentLinks, newLast
-	}
-
-	return currentLinks, lastGoodLinks
 }
 
 func APIRemoteSourcesHandler(manager *subscription.RemoteManager) http.HandlerFunc {

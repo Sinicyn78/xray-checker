@@ -45,11 +45,11 @@ func TestSelectTopBLByLatencyFiltersAndSorts(t *testing.T) {
 		t.Fatalf("expected 2 proxies, got %d", len(got.proxies))
 	}
 
-	if got.proxies[0].Name != "bl Beta" {
-		t.Fatalf("expected fastest BL proxy to be bl Beta, got %s", got.proxies[0].Name)
+	if got.proxies[0].proxy.Name != "bl Beta" {
+		t.Fatalf("expected fastest BL proxy to be bl Beta, got %s", got.proxies[0].proxy.Name)
 	}
-	if got.proxies[1].Name != "BL Alpha" {
-		t.Fatalf("expected second BL proxy to be BL Alpha, got %s", got.proxies[1].Name)
+	if got.proxies[1].proxy.Name != "BL Alpha" {
+		t.Fatalf("expected second BL proxy to be BL Alpha, got %s", got.proxies[1].proxy.Name)
 	}
 }
 
@@ -71,11 +71,11 @@ func TestSelectTopBLByLatencyLimit(t *testing.T) {
 		t.Fatalf("expected 10 proxies, got %d", len(got.proxies))
 	}
 
-	if got.proxies[0].Name != "BL Node 00" {
-		t.Fatalf("expected first proxy BL Node 00, got %s", got.proxies[0].Name)
+	if got.proxies[0].proxy.Name != "BL Node 00" {
+		t.Fatalf("expected first proxy BL Node 00, got %s", got.proxies[0].proxy.Name)
 	}
-	if got.proxies[9].Name != "BL Node 09" {
-		t.Fatalf("expected tenth proxy BL Node 09, got %s", got.proxies[9].Name)
+	if got.proxies[9].proxy.Name != "BL Node 09" {
+		t.Fatalf("expected tenth proxy BL Node 09, got %s", got.proxies[9].proxy.Name)
 	}
 }
 
@@ -101,11 +101,11 @@ func TestSelectTopBLByLatencyDeduplicatesByUUID(t *testing.T) {
 	if len(got.proxies) != 2 {
 		t.Fatalf("expected 2 proxies after dedup, got %d", len(got.proxies))
 	}
-	if got.proxies[0].StableID != fast.StableID {
-		t.Fatalf("expected fastest duplicate to be selected, got %s", got.proxies[0].Name)
+	if got.proxies[0].proxy.StableID != fast.StableID {
+		t.Fatalf("expected fastest duplicate to be selected, got %s", got.proxies[0].proxy.Name)
 	}
-	if got.proxies[1].StableID != other.StableID {
-		t.Fatalf("expected second proxy to be BL Other, got %s", got.proxies[1].Name)
+	if got.proxies[1].proxy.StableID != other.StableID {
+		t.Fatalf("expected second proxy to be BL Other, got %s", got.proxies[1].proxy.Name)
 	}
 }
 
@@ -135,37 +135,68 @@ func TestAPITopBLSubscriptionHandlerToken(t *testing.T) {
 	}
 }
 
-func TestResolveSubscriptionLinksKeepsLastWhenAllNA(t *testing.T) {
-	last := []string{"vless://old1", "vless://old2"}
-	current := []string{"vless://new1"}
-	selection := topSelectionResult{
-		totalBL: 2,
-		naCount: 2,
+func TestStableTopBLSelectorKeepsPublishedWhenAllNA(t *testing.T) {
+	selector := newStableTopBLSelector(10)
+	now := time.Now()
+
+	p1 := newTestProxy("BL One", "vless://one")
+	p2 := newTestProxy("BL Two", "vless://two")
+	proxies := []*models.ProxyConfig{p1, p2}
+
+	statusOK := map[string]time.Duration{
+		p1.StableID: 100 * time.Millisecond,
+		p2.StableID: 120 * time.Millisecond,
+	}
+	first := selector.Next(proxies, func(stableID string) (bool, time.Duration, error) {
+		return true, statusOK[stableID], nil
+	}, now)
+	if len(first) != 2 {
+		t.Fatalf("expected first publish of 2 links, got %d", len(first))
 	}
 
-	out, newLast := resolveSubscriptionLinks(current, selection, last)
-	if len(out) != 2 || out[0] != "vless://old1" {
-		t.Fatalf("expected output to keep last list, got: %v", out)
-	}
-	if len(newLast) != 2 || newLast[1] != "vless://old2" {
-		t.Fatalf("expected cached last list unchanged, got: %v", newLast)
+	second := selector.Next(proxies, func(stableID string) (bool, time.Duration, error) {
+		return false, 0, fmt.Errorf("n/a")
+	}, now.Add(5*time.Minute))
+	if len(second) != 2 || second[0] != first[0] {
+		t.Fatalf("expected published links to be preserved on all n/a, got %v", second)
 	}
 }
 
-func TestResolveSubscriptionLinksUpdatesLastOnFreshData(t *testing.T) {
-	last := []string{"vless://old1"}
-	current := []string{"vless://new1", "vless://new2"}
-	selection := topSelectionResult{
-		totalBL: 2,
-		naCount: 0,
+func TestStableTopBLSelectorHysteresisAndHold(t *testing.T) {
+	selector := newStableTopBLSelector(1)
+	now := time.Now()
+
+	incumbent := newTestProxy("BL Incumbent", "vless://incumbent")
+	challenger := newTestProxy("BL Challenger", "vless://challenger")
+
+	// Initial publish with incumbent.
+	out1 := selector.Next([]*models.ProxyConfig{incumbent}, func(stableID string) (bool, time.Duration, error) {
+		return true, 200 * time.Millisecond, nil
+	}, now)
+	if len(out1) != 1 || out1[0] != sanitizeConfig(incumbent.SourceLine) {
+		t.Fatalf("unexpected initial output: %v", out1)
 	}
 
-	out, newLast := resolveSubscriptionLinks(current, selection, last)
-	if len(out) != 2 || out[0] != "vless://new1" {
-		t.Fatalf("expected output to use fresh list, got: %v", out)
+	// Challenger is only 20ms faster and within hold interval: should not replace.
+	out2 := selector.Next([]*models.ProxyConfig{incumbent, challenger}, func(stableID string) (bool, time.Duration, error) {
+		if stableID == incumbent.StableID {
+			return true, 200 * time.Millisecond, nil
+		}
+		return true, 180 * time.Millisecond, nil
+	}, now.Add(10*time.Minute))
+	if out2[0] != sanitizeConfig(incumbent.SourceLine) {
+		t.Fatalf("expected incumbent to stay during hold/hysteresis, got %v", out2)
 	}
-	if len(newLast) != 2 || newLast[1] != "vless://new2" {
-		t.Fatalf("expected cached last list updated, got: %v", newLast)
+
+	// After hold, challenger is significantly faster: replacement allowed.
+	out3 := selector.Next([]*models.ProxyConfig{incumbent, challenger}, func(stableID string) (bool, time.Duration, error) {
+		if stableID == incumbent.StableID {
+			return true, 250 * time.Millisecond, nil
+		}
+		return true, 120 * time.Millisecond, nil
+	}, now.Add(3*time.Hour))
+	if out3[0] != sanitizeConfig(challenger.SourceLine) {
+		t.Fatalf("expected challenger to replace incumbent after hold with significant gain, got %v", out3)
 	}
 }
 
