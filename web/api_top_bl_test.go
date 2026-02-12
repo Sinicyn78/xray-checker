@@ -41,15 +41,15 @@ func TestSelectTopBLByLatencyFiltersAndSorts(t *testing.T) {
 		return v.online, v.latency, v.err
 	}, 10)
 
-	if len(got) != 2 {
-		t.Fatalf("expected 2 proxies, got %d", len(got))
+	if len(got.proxies) != 2 {
+		t.Fatalf("expected 2 proxies, got %d", len(got.proxies))
 	}
 
-	if got[0].Name != "bl Beta" {
-		t.Fatalf("expected fastest BL proxy to be bl Beta, got %s", got[0].Name)
+	if got.proxies[0].Name != "bl Beta" {
+		t.Fatalf("expected fastest BL proxy to be bl Beta, got %s", got.proxies[0].Name)
 	}
-	if got[1].Name != "BL Alpha" {
-		t.Fatalf("expected second BL proxy to be BL Alpha, got %s", got[1].Name)
+	if got.proxies[1].Name != "BL Alpha" {
+		t.Fatalf("expected second BL proxy to be BL Alpha, got %s", got.proxies[1].Name)
 	}
 }
 
@@ -67,15 +67,15 @@ func TestSelectTopBLByLatencyLimit(t *testing.T) {
 		return true, latencyByID[stableID], nil
 	}, 10)
 
-	if len(got) != 10 {
-		t.Fatalf("expected 10 proxies, got %d", len(got))
+	if len(got.proxies) != 10 {
+		t.Fatalf("expected 10 proxies, got %d", len(got.proxies))
 	}
 
-	if got[0].Name != "BL Node 00" {
-		t.Fatalf("expected first proxy BL Node 00, got %s", got[0].Name)
+	if got.proxies[0].Name != "BL Node 00" {
+		t.Fatalf("expected first proxy BL Node 00, got %s", got.proxies[0].Name)
 	}
-	if got[9].Name != "BL Node 09" {
-		t.Fatalf("expected tenth proxy BL Node 09, got %s", got[9].Name)
+	if got.proxies[9].Name != "BL Node 09" {
+		t.Fatalf("expected tenth proxy BL Node 09, got %s", got.proxies[9].Name)
 	}
 }
 
@@ -98,14 +98,14 @@ func TestSelectTopBLByLatencyDeduplicatesByUUID(t *testing.T) {
 		return true, status[stableID], nil
 	}, 10)
 
-	if len(got) != 2 {
-		t.Fatalf("expected 2 proxies after dedup, got %d", len(got))
+	if len(got.proxies) != 2 {
+		t.Fatalf("expected 2 proxies after dedup, got %d", len(got.proxies))
 	}
-	if got[0].StableID != fast.StableID {
-		t.Fatalf("expected fastest duplicate to be selected, got %s", got[0].Name)
+	if got.proxies[0].StableID != fast.StableID {
+		t.Fatalf("expected fastest duplicate to be selected, got %s", got.proxies[0].Name)
 	}
-	if got[1].StableID != other.StableID {
-		t.Fatalf("expected second proxy to be BL Other, got %s", got[1].Name)
+	if got.proxies[1].StableID != other.StableID {
+		t.Fatalf("expected second proxy to be BL Other, got %s", got.proxies[1].Name)
 	}
 }
 
@@ -132,6 +132,40 @@ func TestAPITopBLSubscriptionHandlerToken(t *testing.T) {
 	handler.ServeHTTP(recGoodToken, reqGoodToken)
 	if recGoodToken.Code != http.StatusOK {
 		t.Fatalf("expected 200 with valid token, got %d", recGoodToken.Code)
+	}
+}
+
+func TestResolveSubscriptionLinksKeepsLastWhenAllNA(t *testing.T) {
+	last := []string{"vless://old1", "vless://old2"}
+	current := []string{"vless://new1"}
+	selection := topSelectionResult{
+		totalBL: 2,
+		naCount: 2,
+	}
+
+	out, newLast := resolveSubscriptionLinks(current, selection, last)
+	if len(out) != 2 || out[0] != "vless://old1" {
+		t.Fatalf("expected output to keep last list, got: %v", out)
+	}
+	if len(newLast) != 2 || newLast[1] != "vless://old2" {
+		t.Fatalf("expected cached last list unchanged, got: %v", newLast)
+	}
+}
+
+func TestResolveSubscriptionLinksUpdatesLastOnFreshData(t *testing.T) {
+	last := []string{"vless://old1"}
+	current := []string{"vless://new1", "vless://new2"}
+	selection := topSelectionResult{
+		totalBL: 2,
+		naCount: 0,
+	}
+
+	out, newLast := resolveSubscriptionLinks(current, selection, last)
+	if len(out) != 2 || out[0] != "vless://new1" {
+		t.Fatalf("expected output to use fresh list, got: %v", out)
+	}
+	if len(newLast) != 2 || newLast[1] != "vless://new2" {
+		t.Fatalf("expected cached last list updated, got: %v", newLast)
 	}
 }
 

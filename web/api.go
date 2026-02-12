@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"xray-checker/checker"
 	"xray-checker/config"
@@ -94,6 +95,14 @@ type RemoteStateResponse struct {
 type rankedProxy struct {
 	proxy   *models.ProxyConfig
 	latency time.Duration
+}
+
+type topSelectionResult struct {
+	proxies       []*models.ProxyConfig
+	totalBL       int
+	naCount       int
+	onlineCount   int
+	offlineCount  int
 }
 
 func writeJSON(w http.ResponseWriter, data interface{}) {
@@ -362,6 +371,9 @@ func APIDocsHandler() http.HandlerFunc {
 
 // APITopBLSubscriptionHandler returns base64-encoded subscription with top 10 fastest BL configs.
 func APITopBLSubscriptionHandler(proxyChecker *checker.ProxyChecker, requiredToken string) http.HandlerFunc {
+	var mu sync.Mutex
+	lastGoodLinks := make([]string, 0)
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -375,9 +387,9 @@ func APITopBLSubscriptionHandler(proxyChecker *checker.ProxyChecker, requiredTok
 			}
 		}
 
-		selected := selectTopBLByLatency(proxyChecker.GetProxies(), proxyChecker.GetProxyStatusByStableID, 10)
-		links := make([]string, 0, len(selected))
-		for _, proxy := range selected {
+		selection := selectTopBLByLatency(proxyChecker.GetProxies(), proxyChecker.GetProxyStatusByStableID, 10)
+		links := make([]string, 0, len(selection.proxies))
+		for _, proxy := range selection.proxies {
 			line := sanitizeConfig(proxy.SourceLine)
 			if line == "" {
 				continue
@@ -385,6 +397,10 @@ func APITopBLSubscriptionHandler(proxyChecker *checker.ProxyChecker, requiredTok
 			// Keep subscription output aligned with what UI shows/copies.
 			links = append(links, line)
 		}
+
+		mu.Lock()
+		links, lastGoodLinks = resolveSubscriptionLinks(links, selection, lastGoodLinks)
+		mu.Unlock()
 
 		payload := strings.Join(links, "\n")
 		encoded := base64.StdEncoding.EncodeToString([]byte(payload))
@@ -409,11 +425,12 @@ func selectTopBLByLatency(
 	proxies []*models.ProxyConfig,
 	statusFn func(string) (bool, time.Duration, error),
 	limit int,
-) []*models.ProxyConfig {
+) topSelectionResult {
 	if limit <= 0 {
 		limit = 10
 	}
 
+	result := topSelectionResult{}
 	uniqueByKey := make(map[string]rankedProxy, len(proxies))
 	for _, proxy := range proxies {
 		if proxy == nil || strings.TrimSpace(proxy.SourceLine) == "" {
@@ -422,14 +439,21 @@ func selectTopBLByLatency(
 		if !strings.Contains(strings.ToUpper(proxy.Name), "BL") {
 			continue
 		}
+		result.totalBL++
 		if proxy.StableID == "" {
 			proxy.StableID = proxy.GenerateStableID()
 		}
 
 		online, latency, err := statusFn(proxy.StableID)
-		if err != nil || !online {
+		if err != nil {
+			result.naCount++
 			continue
 		}
+		if !online {
+			result.offlineCount++
+			continue
+		}
+		result.onlineCount++
 
 		candidate := rankedProxy{
 			proxy:   proxy,
@@ -474,7 +498,8 @@ func selectTopBLByLatency(
 		selected = append(selected, item.proxy)
 	}
 
-	return selected
+	result.proxies = selected
+	return result
 }
 
 func dedupKey(proxy *models.ProxyConfig) string {
@@ -502,6 +527,24 @@ func isBetterCandidate(left, right rankedProxy) bool {
 		return leftName < rightName
 	}
 	return left.proxy.StableID < right.proxy.StableID
+}
+
+func resolveSubscriptionLinks(
+	currentLinks []string,
+	selection topSelectionResult,
+	lastGoodLinks []string,
+) ([]string, []string) {
+	// All BL proxies are n/a in this iteration: keep previous subscription list.
+	if selection.totalBL > 0 && selection.naCount == selection.totalBL && len(lastGoodLinks) > 0 {
+		return append([]string(nil), lastGoodLinks...), lastGoodLinks
+	}
+
+	if len(currentLinks) > 0 {
+		newLast := append(lastGoodLinks[:0], currentLinks...)
+		return currentLinks, newLast
+	}
+
+	return currentLinks, lastGoodLinks
 }
 
 func APIRemoteSourcesHandler(manager *subscription.RemoteManager) http.HandlerFunc {
