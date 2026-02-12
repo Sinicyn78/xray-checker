@@ -35,6 +35,7 @@ type ProxyChecker struct {
 	checkConcurrency int
 	mu               sync.RWMutex
 	generation       uint64
+	generationSkips  uint64
 	badSinceMu       sync.RWMutex
 	badSince         map[string]time.Time
 }
@@ -116,7 +117,7 @@ func (pc *ProxyChecker) checkProxyInternal(proxy *models.ProxyConfig, expectedGe
 
 	setFailedStatus := func() {
 		if !isGenerationValid() {
-			logger.Debug("%s | Skipping metric update: generation changed", proxy.Name)
+			atomic.AddUint64(&pc.generationSkips, 1)
 			return
 		}
 		metrics.RecordProxyStatus(
@@ -194,7 +195,7 @@ func (pc *ProxyChecker) checkProxyInternal(proxy *models.ProxyConfig, expectedGe
 	} else {
 		logger.Result("%s | Success | %s | Latency: %s", proxy.Name, logMessage, latency)
 		if !isGenerationValid() {
-			logger.Debug("%s | Skipping metric update: generation changed", proxy.Name)
+			atomic.AddUint64(&pc.generationSkips, 1)
 			return
 		}
 		metrics.RecordProxyStatus(
@@ -276,28 +277,36 @@ func (pc *ProxyChecker) checkByIP(client *http.Client) (bool, string, time.Durat
 }
 
 func (pc *ProxyChecker) checkByGen(client *http.Client) (bool, string, time.Duration, error) {
-	req, err := http.NewRequest("GET", pc.genMethodURL, nil)
-	if err != nil {
-		return false, "", 0, err
+	for attempt := 1; attempt <= 2; attempt++ {
+		req, err := http.NewRequest("GET", pc.genMethodURL, nil)
+		if err != nil {
+			return false, "", 0, err
+		}
+
+		var ttfb time.Duration
+		start := time.Now()
+		trace := &httptrace.ClientTrace{
+			GotFirstResponseByte: func() {
+				ttfb = time.Since(start)
+			},
+		}
+		req = req.WithContext(httptrace.WithClientTrace(context.Background(), trace))
+
+		resp, err := client.Do(req)
+		if err != nil {
+			if attempt == 1 && strings.Contains(strings.ToUpper(err.Error()), "EOF") {
+				time.Sleep(120 * time.Millisecond)
+				continue
+			}
+			return false, "", 0, err
+		}
+		defer resp.Body.Close()
+
+		logMessage := fmt.Sprintf("Status: %d", resp.StatusCode)
+		return resp.StatusCode >= 200 && resp.StatusCode < 300, logMessage, ttfb, nil
 	}
 
-	var ttfb time.Duration
-	start := time.Now()
-	trace := &httptrace.ClientTrace{
-		GotFirstResponseByte: func() {
-			ttfb = time.Since(start)
-		},
-	}
-	req = req.WithContext(httptrace.WithClientTrace(context.Background(), trace))
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return false, "", 0, err
-	}
-	defer resp.Body.Close()
-
-	logMessage := fmt.Sprintf("Status: %d", resp.StatusCode)
-	return resp.StatusCode >= 200 && resp.StatusCode < 300, logMessage, ttfb, nil
+	return false, "", 0, fmt.Errorf("status check failed after retry")
 }
 
 func (pc *ProxyChecker) checkByDownload(client *http.Client) (bool, string, time.Duration, error) {
@@ -417,6 +426,10 @@ func (pc *ProxyChecker) CheckAllProxies() {
 		}(proxy, currentGeneration)
 	}
 	wg.Wait()
+
+	if skipped := atomic.SwapUint64(&pc.generationSkips, 0); skipped > 0 {
+		logger.Debug("Skipped metric updates due to generation change: %d", skipped)
+	}
 }
 
 func (pc *ProxyChecker) GetProxyStatus(name string) (bool, time.Duration, error) {

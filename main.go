@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 	"xray-checker/checker"
 	"xray-checker/config"
@@ -121,10 +122,15 @@ func main() {
 		remoteManager.StartUpdateLoop(stopRemote)
 	}
 
+	var updateInProgress atomic.Bool
+
 	runCheckIteration := func() {
+		if updateInProgress.Load() {
+			logger.Info("Skipping proxy check iteration: configuration update in progress")
+			return
+		}
 		logger.Info("Starting proxy check iteration")
 		proxyChecker.CheckAllProxies()
-		cleanupBadFileConfigs(proxyChecker)
 
 		if config.CLIConfig.Metrics.PushURL != "" {
 			pushConfig, err := metrics.ParseURL(config.CLIConfig.Metrics.PushURL)
@@ -162,9 +168,11 @@ func main() {
 				if subscription.ShouldTreatAsEmptyResult(err) {
 					logger.Warn("Subscription source is empty/unavailable, clearing active proxies: %v", err)
 					if len(*proxyConfigs) > 0 {
+						updateInProgress.Store(true)
 						if err := clearConfiguration(proxyConfigs, xrayRunner, &xrayRunning, proxyChecker); err != nil {
 							logger.Error("Error clearing configuration: %v", err)
 						}
+						updateInProgress.Store(false)
 					}
 					return
 				}
@@ -182,9 +190,11 @@ func main() {
 			}
 
 			if !xray.IsConfigsEqual(*proxyConfigs, newConfigs) {
+				updateInProgress.Store(true)
 				if err := updateConfiguration(newConfigs, proxyConfigs, xrayRunner, &xrayRunning, proxyChecker); err != nil {
 					logger.Error("Error updating configuration: %v", err)
 				}
+				updateInProgress.Store(false)
 			} else {
 				logger.Info("Subscriptions checked, no changes")
 			}

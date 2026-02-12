@@ -228,15 +228,6 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to read file: %v", err)
 		}
-		if removed, kept, cleanErr := p.removeInvalidConfigsFromFile(filePath, rawData); cleanErr != nil {
-			logger.Warn("Failed to clean invalid configs from file %s: %v", filePath, cleanErr)
-		} else if removed > 0 {
-			logger.Warn("Removed %d invalid configs from file %s (kept %d), reloading", removed, filePath, kept)
-			rawData, err = os.ReadFile(filePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read file after cleanup: %v", err)
-			}
-		}
 	case "base64":
 		rawData = []byte(strings.TrimPrefix(subscriptionData, "base64://"))
 		rawData = []byte(strings.TrimPrefix(string(rawData), "data:text/plain;base64,"))
@@ -1319,16 +1310,7 @@ func (p *Parser) parseFolder(folderPath string) ([]*models.ProxyConfig, error) {
 		}
 
 		if ext == ".txt" {
-			if removed, kept, cleanErr := p.removeInvalidConfigsFromFile(filePath, data); cleanErr != nil {
-				logger.Warn("Failed to clean invalid configs from file %s: %v", fileName, cleanErr)
-			} else if removed > 0 {
-				logger.Warn("Removed %d invalid configs from file %s (kept %d), reloading", removed, fileName, kept)
-				data, err = os.ReadFile(filePath)
-				if err != nil {
-					logger.Warn("Failed to read file %s after cleanup: %v", fileName, err)
-					continue
-				}
-			}
+			// Do not mutate runtime source files; parse as-is and skip invalid lines in-memory.
 		}
 
 		configs, err := p.parseRawData(data, filePath, "")
