@@ -16,7 +16,7 @@ const (
 	geoSiteFile = "geo/geosite.dat"
 	geoIPFile   = "geo/geoip.dat"
 
-	geoDownloadTimeout = 45 * time.Second
+	geoDownloadTimeout = 90 * time.Second
 	geoDownloadRetries = 3
 )
 
