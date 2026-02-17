@@ -839,14 +839,14 @@ func selectTopBLByLatency(
 
 func dedupKey(proxy *models.ProxyConfig) string {
 	protocol := strings.ToLower(strings.TrimSpace(proxy.Protocol))
+	if sid := strings.TrimSpace(proxy.StableID); sid != "" {
+		return protocol + "|stable|" + sid
+	}
 	if id := strings.TrimSpace(proxy.UUID); id != "" {
 		return protocol + "|uuid|" + id
 	}
 	if pw := strings.TrimSpace(proxy.Password); pw != "" {
 		return protocol + "|password|" + pw
-	}
-	if sid := strings.TrimSpace(proxy.StableID); sid != "" {
-		return protocol + "|stable|" + sid
 	}
 	return protocol + "|name|" + strings.ToLower(strings.TrimSpace(proxy.Name))
 }

@@ -795,7 +795,7 @@ func (p *Parser) parseShareLink(link string) *parsedLink {
 
 	result := &parsedLink{
 		Protocol: u.Scheme,
-		Name: u.Fragment,
+		Name:     u.Fragment,
 	}
 
 	host := u.Hostname()
@@ -1153,6 +1153,9 @@ func (p *Parser) convertOutbound(raw json.RawMessage, index int, originalData ma
 		}
 		if orig.AllowInsecure {
 			pc.AllowInsecure = true
+		}
+		if orig.Name != "" {
+			pc.Name = orig.Name
 		}
 		if orig.RawLine != "" {
 			pc.SourceLine = orig.RawLine

@@ -114,6 +114,27 @@ func (pc *ProxyConfig) GenerateStableID() string {
 		idComponents = append(idComponents, pc.PublicKey)
 	}
 
+	// Include transport and reality-specific fields to avoid collisions between
+	// configs that share UUID/server but differ in routing-critical params.
+	if pc.ShortID != "" {
+		idComponents = append(idComponents, pc.ShortID)
+	}
+	if pc.Host != "" {
+		idComponents = append(idComponents, pc.Host)
+	}
+	if pc.Path != "" {
+		idComponents = append(idComponents, pc.Path)
+	}
+	if pc.ServiceName != "" {
+		idComponents = append(idComponents, pc.ServiceName)
+	}
+	if pc.Mode != "" {
+		idComponents = append(idComponents, pc.Mode)
+	}
+	if pc.RawXhttpSettings != "" {
+		idComponents = append(idComponents, pc.RawXhttpSettings)
+	}
+
 	idString := strings.Join(idComponents, "|")
 
 	hash := sha256.Sum256([]byte(idString))

@@ -80,30 +80,36 @@ func TestSelectTopBLByLatencyLimit(t *testing.T) {
 	}
 }
 
-func TestSelectTopBLByLatencyDeduplicatesByUUID(t *testing.T) {
-	fast := newTestProxy("BL Fast", "vless://fast")
-	slow := newTestProxy("BL Slow", "vless://slow")
+func TestSelectTopBLByLatencyDeduplicatesByStableID(t *testing.T) {
+	base := newTestProxy("BL Base", "vless://base")
+	duplicate := &models.ProxyConfig{
+		Protocol:   base.Protocol,
+		Server:     base.Server,
+		Port:       base.Port,
+		Name:       "BL Duplicate",
+		UUID:       base.UUID,
+		Security:   base.Security,
+		Type:       base.Type,
+		SNI:        base.SNI,
+		SourceLine: "vless://duplicate",
+	}
+	duplicate.StableID = duplicate.GenerateStableID()
 	other := newTestProxy("BL Other", "vless://other")
 
-	// Same UUID means same logical node from client perspective; keep only the fastest one.
-	slow.UUID = fast.UUID
-	slow.StableID = slow.GenerateStableID()
-
 	status := map[string]time.Duration{
-		fast.StableID:  90 * time.Millisecond,
-		slow.StableID:  250 * time.Millisecond,
+		base.StableID:  90 * time.Millisecond,
 		other.StableID: 120 * time.Millisecond,
 	}
 
-	got := selectTopBLByLatency([]*models.ProxyConfig{slow, fast, other}, func(stableID string) (bool, time.Duration, error) {
+	got := selectTopBLByLatency([]*models.ProxyConfig{base, duplicate, other}, func(stableID string) (bool, time.Duration, error) {
 		return true, status[stableID], nil
 	}, 10)
 
 	if len(got.proxies) != 2 {
 		t.Fatalf("expected 2 proxies after dedup, got %d", len(got.proxies))
 	}
-	if got.proxies[0].proxy.StableID != fast.StableID {
-		t.Fatalf("expected fastest duplicate to be selected, got %s", got.proxies[0].proxy.Name)
+	if got.proxies[0].proxy.StableID != base.StableID {
+		t.Fatalf("expected one stable duplicate to remain, got %s", got.proxies[0].proxy.Name)
 	}
 	if got.proxies[1].proxy.StableID != other.StableID {
 		t.Fatalf("expected second proxy to be BL Other, got %s", got.proxies[1].proxy.Name)
