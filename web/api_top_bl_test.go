@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 	"xray-checker/checker"
@@ -28,7 +29,7 @@ func TestSelectTopBLByLatencyFiltersAndSorts(t *testing.T) {
 	}{
 		proxies[0].StableID: {online: true, latency: 120 * time.Millisecond},
 		proxies[1].StableID: {online: true, latency: 80 * time.Millisecond},
-		proxies[2].StableID: {online: true, latency: 10 * time.Millisecond}, // no BL in name
+		proxies[2].StableID: {online: true, latency: 10 * time.Millisecond},  // no BL in name
 		proxies[3].StableID: {online: false, latency: 20 * time.Millisecond}, // offline
 		proxies[4].StableID: {online: true, latency: 5 * time.Millisecond},   // empty link
 	}
@@ -89,8 +90,8 @@ func TestSelectTopBLByLatencyDeduplicatesByUUID(t *testing.T) {
 	slow.StableID = slow.GenerateStableID()
 
 	status := map[string]time.Duration{
-		fast.StableID: 90 * time.Millisecond,
-		slow.StableID: 250 * time.Millisecond,
+		fast.StableID:  90 * time.Millisecond,
+		slow.StableID:  250 * time.Millisecond,
 		other.StableID: 120 * time.Millisecond,
 	}
 
@@ -106,6 +107,48 @@ func TestSelectTopBLByLatencyDeduplicatesByUUID(t *testing.T) {
 	}
 	if got.proxies[1].proxy.StableID != other.StableID {
 		t.Fatalf("expected second proxy to be BL Other, got %s", got.proxies[1].proxy.Name)
+	}
+}
+
+func TestSelectTopBLAndCIDRByLatencyQuotas(t *testing.T) {
+	proxies := make([]*models.ProxyConfig, 0, 24)
+	latencyByID := make(map[string]time.Duration, 24)
+
+	for i := 0; i < 12; i++ {
+		p := newTestProxy(fmt.Sprintf("BL Node %02d", i), fmt.Sprintf("vless://bl-%d", i))
+		proxies = append(proxies, p)
+		latencyByID[p.StableID] = time.Duration(10+i) * time.Millisecond
+	}
+	for i := 0; i < 12; i++ {
+		p := newTestProxy(fmt.Sprintf("CIDR Node %02d", i), fmt.Sprintf("vless://cidr-%d", i))
+		proxies = append(proxies, p)
+		latencyByID[p.StableID] = time.Duration(10+i) * time.Millisecond
+	}
+
+	got := selectTopBLAndCIDRByLatency(proxies, func(stableID string) (bool, time.Duration, error) {
+		return true, latencyByID[stableID], nil
+	}, 10, 10)
+
+	if len(got.proxies) != 20 {
+		t.Fatalf("expected 20 proxies total, got %d", len(got.proxies))
+	}
+
+	blCount := 0
+	cidrCount := 0
+	for _, rp := range got.proxies {
+		name := strings.ToUpper(rp.proxy.Name)
+		if strings.Contains(name, "BL") {
+			blCount++
+		}
+		if strings.Contains(name, "CIDR") {
+			cidrCount++
+		}
+	}
+	if blCount != 10 {
+		t.Fatalf("expected 10 BL proxies, got %d", blCount)
+	}
+	if cidrCount != 10 {
+		t.Fatalf("expected 10 CIDR proxies, got %d", cidrCount)
 	}
 }
 

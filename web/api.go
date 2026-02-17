@@ -105,12 +105,12 @@ type keyStatusCounts struct {
 }
 
 type topSelectionResult struct {
-	proxies       []rankedProxy
-	totalBL       int
-	naCount       int
-	onlineCount   int
-	offlineCount  int
-	keyStates     map[string]keyStatusCounts
+	proxies      []rankedProxy
+	totalBL      int
+	naCount      int
+	onlineCount  int
+	offlineCount int
+	keyStates    map[string]keyStatusCounts
 }
 
 type activeEntry struct {
@@ -136,6 +136,8 @@ const (
 	topBLReplaceMinMs   = 50 * time.Millisecond
 	topBLReplaceMinGain = 0.20
 	topBLBadStreakLimit = 2
+	topBLQuota          = 10
+	topCIDRQuota        = 10
 )
 
 func writeJSON(w http.ResponseWriter, data interface{}) {
@@ -402,9 +404,9 @@ func APIDocsHandler() http.HandlerFunc {
 	}
 }
 
-// APITopBLSubscriptionHandler returns base64-encoded subscription with top 10 fastest BL configs.
+// APITopBLSubscriptionHandler returns base64-encoded subscription with top fastest BL and CIDR configs.
 func APITopBLSubscriptionHandler(proxyChecker *checker.ProxyChecker, requiredToken string) http.HandlerFunc {
-	selector := newStableTopBLSelector(10)
+	selector := newStableTopBLSelector(topBLQuota + topCIDRQuota)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -456,7 +458,7 @@ func (s *stableTopBLSelector) Next(
 	statusFn func(string) (bool, time.Duration, error),
 	now time.Time,
 ) []string {
-	selection := selectTopBLByLatency(proxies, statusFn, len(proxies))
+	selection := selectTopBLAndCIDRByLatency(proxies, statusFn, topBLQuota, topCIDRQuota)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -487,6 +489,133 @@ func (s *stableTopBLSelector) Next(
 	}
 
 	return append([]string(nil), s.published...)
+}
+
+func selectTopBLAndCIDRByLatency(
+	proxies []*models.ProxyConfig,
+	statusFn func(string) (bool, time.Duration, error),
+	blLimit int,
+	cidrLimit int,
+) topSelectionResult {
+	if blLimit < 0 {
+		blLimit = 0
+	}
+	if cidrLimit < 0 {
+		cidrLimit = 0
+	}
+
+	result := topSelectionResult{
+		keyStates: make(map[string]keyStatusCounts),
+	}
+	uniqueByKey := make(map[string]rankedProxy, len(proxies))
+	for _, proxy := range proxies {
+		if proxy == nil || strings.TrimSpace(proxy.SourceLine) == "" {
+			continue
+		}
+
+		nameUpper := strings.ToUpper(proxy.Name)
+		hasBL := strings.Contains(nameUpper, "BL")
+		hasCIDR := strings.Contains(nameUpper, "CIDR")
+		if !hasBL && !hasCIDR {
+			continue
+		}
+
+		result.totalBL++
+		if proxy.StableID == "" {
+			proxy.StableID = proxy.GenerateStableID()
+		}
+		key := dedupKey(proxy)
+
+		online, latency, err := statusFn(proxy.StableID)
+		if err != nil {
+			result.naCount++
+			st := result.keyStates[key]
+			st.na++
+			result.keyStates[key] = st
+			continue
+		}
+		if !online {
+			result.offlineCount++
+			st := result.keyStates[key]
+			st.offline++
+			result.keyStates[key] = st
+			continue
+		}
+		result.onlineCount++
+		st := result.keyStates[key]
+		st.online++
+		result.keyStates[key] = st
+
+		candidate := rankedProxy{
+			proxy:   proxy,
+			latency: latency,
+			key:     key,
+		}
+		if existing, ok := uniqueByKey[key]; ok {
+			if isBetterCandidate(candidate, existing) {
+				uniqueByKey[key] = candidate
+			}
+			continue
+		}
+		uniqueByKey[key] = candidate
+	}
+
+	ranked := make([]rankedProxy, 0, len(uniqueByKey))
+	for _, item := range uniqueByKey {
+		ranked = append(ranked, item)
+	}
+	sort.Slice(ranked, func(i, j int) bool { return isBetterCandidate(ranked[i], ranked[j]) })
+
+	selected := make([]rankedProxy, 0, blLimit+cidrLimit)
+	selectedByKey := make(map[string]struct{}, blLimit+cidrLimit)
+	blCount, cidrCount := 0, 0
+
+	for _, item := range ranked {
+		if blCount >= blLimit && cidrCount >= cidrLimit {
+			break
+		}
+		if _, exists := selectedByKey[item.key]; exists {
+			continue
+		}
+
+		nameUpper := strings.ToUpper(item.proxy.Name)
+		hasBL := strings.Contains(nameUpper, "BL")
+		hasCIDR := strings.Contains(nameUpper, "CIDR")
+		if !hasBL && !hasCIDR {
+			continue
+		}
+
+		switch {
+		case hasBL && hasCIDR:
+			blNeed := blLimit - blCount
+			cidrNeed := cidrLimit - cidrCount
+			if blNeed <= 0 && cidrNeed <= 0 {
+				continue
+			}
+			// Prefer filling the most-empty bucket first.
+			if cidrNeed > blNeed {
+				cidrCount++
+			} else {
+				blCount++
+			}
+		case hasBL:
+			if blCount >= blLimit {
+				continue
+			}
+			blCount++
+		case hasCIDR:
+			if cidrCount >= cidrLimit {
+				continue
+			}
+			cidrCount++
+		}
+
+		selectedByKey[item.key] = struct{}{}
+		selected = append(selected, item)
+	}
+
+	result.proxies = selected
+	return result
 }
 
 func (s *stableTopBLSelector) applyEMA(proxies []rankedProxy) []rankedProxy {
