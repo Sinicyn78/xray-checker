@@ -73,6 +73,33 @@ docker run -d \
   sinicyn/xray-checker:latest
 ```
 
+### Docker (прод-профиль)
+
+```bash
+mkdir -p /opt/xray-checker/configs
+chown -R 1000:1000 /opt/xray-checker
+
+docker run -d \
+  --name xray-checker \
+  --restart unless-stopped \
+  --dns 9.9.9.9 --dns 1.1.1.1 --dns 8.8.8.8 \
+  --health-cmd='wget -qO- http://127.0.0.1:2112/api/v1/public/proxies >/dev/null || exit 1' \
+  --health-interval=30s --health-timeout=10s --health-retries=3 --health-start-period=40s \
+  --log-driver json-file --log-opt max-size=100m --log-opt max-file=1 \
+  -p 2112:2112 \
+  -v /opt/xray-checker/configs:/config/configs \
+  -e SUBSCRIPTION_URL="file:///config/configs/" \
+  -e PROXY_CHECK_METHOD="status" \
+  -e PROXY_STATUS_CHECK_URL="https://www.gstatic.com/generate_204" \
+  -e PROXY_CHECK_INTERVAL="300" \
+  -e SUBSCRIPTION_UPDATE_INTERVAL="300" \
+  -e PROXY_CHECK_CONCURRENCY="6" \
+  -e PROXY_TIMEOUT="50" \
+  -e LOG_FILE="/config/configs/xray-checker.log" \
+  -e WEB_TOP_BL_PATH="/api/v1/public/subscriptions/top-bl" \
+  sinicyn/xray-checker:latest
+```
+
 Если вы ещё не публиковали образ форка:
 
 ```bash
@@ -96,7 +123,7 @@ services:
       SUBSCRIPTION_URL: "https://example.com/subscription"
       PROXY_CHECK_METHOD: "ip"
       PROXY_CHECK_INTERVAL: "300"
-      PROXY_CHECK_CONCURRENCY: "32"
+      PROXY_CHECK_CONCURRENCY: "16"
       METRICS_PROTECTED: "true"
       METRICS_USERNAME: "admin"
       METRICS_PASSWORD: "change-me"
@@ -135,7 +162,7 @@ go build -o xray-checker .
 #### Proxy
 
 - `PROXY_CHECK_INTERVAL` (`--proxy-check-interval`, default `300`)
-- `PROXY_CHECK_CONCURRENCY` (`--proxy-check-concurrency`, default `32`) - **фича форка**
+- `PROXY_CHECK_CONCURRENCY` (`--proxy-check-concurrency`, default `16`) - **фича форка**
 - `PROXY_CHECK_METHOD` (`--proxy-check-method`, `ip|status|download`, default `ip`)
 - `PROXY_IP_CHECK_URL` (`--proxy-ip-check-url`)
 - `PROXY_STATUS_CHECK_URL` (`--proxy-status-check-url`)
@@ -222,7 +249,21 @@ curl -u admin:change-me \
 
 - `PROXY_CHECK_METHOD=ip`
 - `PROXY_CHECK_INTERVAL=120..300`
-- `PROXY_CHECK_CONCURRENCY=32..128` (подбирается по CPU/сети)
+- `PROXY_CHECK_CONCURRENCY=6..32` (подбирается по CPU/сети)
+
+Для нестабильных сетей и больших live-источников:
+
+- `PROXY_CHECK_METHOD=status`
+- `PROXY_STATUS_CHECK_URL=https://www.gstatic.com/generate_204`
+- `PROXY_TIMEOUT=45..60`
+- `PROXY_CHECK_INTERVAL=300`
+- `SUBSCRIPTION_UPDATE_INTERVAL=300`
+
+## Ротация логов (24 часа)
+
+Рекомендуемый вариант в Docker: ротация логов движком (`max-size`/`max-file`) с одним архивом.
+
+Если используете `LOG_FILE` с bind-mount, добавьте ротацию на хосте (пример: `deploy/logrotate/xray-checker.conf`).
 
 ## Кастомизация Web UI
 

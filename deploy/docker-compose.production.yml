@@ -1,0 +1,40 @@
+services:
+  xray-checker:
+    image: sinicyn/xray-checker:latest
+    container_name: xray-checker
+    restart: unless-stopped
+    dns:
+      - 9.9.9.9
+      - 1.1.1.1
+      - 8.8.8.8
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2112/api/v1/public/proxies >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "1"
+    ports:
+      - "2112:2112"
+    volumes:
+      - /opt/xray-checker/configs:/config/configs
+    environment:
+      SUBSCRIPTION_URL: "file:///config/configs/"
+      SUBSCRIPTION_UPDATE: "true"
+      SUBSCRIPTION_UPDATE_INTERVAL: "300"
+      PROXY_CHECK_METHOD: "status"
+      PROXY_STATUS_CHECK_URL: "https://www.gstatic.com/generate_204"
+      PROXY_CHECK_INTERVAL: "300"
+      PROXY_CHECK_CONCURRENCY: "6"
+      PROXY_TIMEOUT: "50"
+      LOG_LEVEL: "debug"
+      XRAY_LOG_LEVEL: "warning"
+      LOG_FILE: "/config/configs/xray-checker.log"
+      WEB_TOP_BL_PATH: "/api/v1/public/subscriptions/top-bl"
+      WEB_TOP_BL_TOKEN: ""
+      WEB_PUBLIC: "false"
+      METRICS_PROTECTED: "false"
