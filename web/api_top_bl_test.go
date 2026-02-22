@@ -158,6 +158,30 @@ func TestSelectTopBLAndCIDRByLatencyQuotas(t *testing.T) {
 	}
 }
 
+func TestSelectTopBLAndCIDRByLatencySkipsInsecureConfigs(t *testing.T) {
+	blSecure := newTestProxy("BL Secure", "vless://a@1.1.1.1:443?security=tls&allowInsecure=0#BL")
+	blBadAllow := newTestProxy("BL Bad Allow", "vless://b@1.1.1.2:443?security=tls&allowInsecure=1#BL")
+	blBadInsecure := newTestProxy("BL Bad Insecure", "vless://c@1.1.1.3:443?security=tls&insecure=1#BL")
+	cidrSecure := newTestProxy("CIDR Secure", "vless://d@1.1.1.4:443?security=reality#CIDR")
+
+	got := selectTopBLAndCIDRByLatency([]*models.ProxyConfig{
+		blSecure, blBadAllow, blBadInsecure, cidrSecure,
+	}, func(stableID string) (bool, time.Duration, error) {
+		return true, 50 * time.Millisecond, nil
+	}, 10, 10)
+
+	if len(got.proxies) != 2 {
+		t.Fatalf("expected 2 allowed proxies, got %d", len(got.proxies))
+	}
+
+	for _, rp := range got.proxies {
+		l := strings.ToLower(rp.proxy.SourceLine)
+		if strings.Contains(l, "allowinsecure=1") || strings.Contains(l, "insecure=1") {
+			t.Fatalf("insecure config must not be selected: %s", rp.proxy.SourceLine)
+		}
+	}
+}
+
 func TestAPITopBLSubscriptionHandlerToken(t *testing.T) {
 	pc := checker.NewProxyChecker(nil, 10000, "http://127.0.0.1:1", 1, "http://example.com", "", 1, 1, "status", 1)
 	handler := APITopBLSubscriptionHandler(pc, "super-secret-token")

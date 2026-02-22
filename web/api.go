@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"net/http"
 	"sort"
 	"strings"
@@ -512,6 +513,9 @@ func selectTopBLAndCIDRByLatency(
 		if proxy == nil || strings.TrimSpace(proxy.SourceLine) == "" {
 			continue
 		}
+		if !isAllowedForSubscription(proxy) {
+			continue
+		}
 
 		nameUpper := strings.ToUpper(proxy.Name)
 		hasBL := strings.Contains(nameUpper, "BL")
@@ -766,6 +770,9 @@ func selectTopBLByLatency(
 		if proxy == nil || strings.TrimSpace(proxy.SourceLine) == "" {
 			continue
 		}
+		if !isAllowedForSubscription(proxy) {
+			continue
+		}
 		if !strings.Contains(strings.ToUpper(proxy.Name), "BL") {
 			continue
 		}
@@ -862,6 +869,42 @@ func isBetterCandidate(left, right rankedProxy) bool {
 		return leftName < rightName
 	}
 	return left.proxy.StableID < right.proxy.StableID
+}
+
+func isAllowedForSubscription(proxy *models.ProxyConfig) bool {
+	// Parsed flag from xray/libxray path.
+	if proxy.AllowInsecure {
+		return false
+	}
+
+	line := strings.TrimSpace(proxy.SourceLine)
+	if line == "" {
+		return false
+	}
+
+	u, err := url.Parse(line)
+	if err == nil {
+		q := u.Query()
+		if isTrueLike(q.Get("allowInsecure")) || isTrueLike(q.Get("insecure")) {
+			return false
+		}
+	}
+
+	// Fallback for malformed/non-standard links where URL parser may not see query properly.
+	ll := strings.ToLower(line)
+	if strings.Contains(ll, "allowinsecure=1") || strings.Contains(ll, "allowinsecure=true") {
+		return false
+	}
+	if strings.Contains(ll, "insecure=1") || strings.Contains(ll, "insecure=true") {
+		return false
+	}
+
+	return true
+}
+
+func isTrueLike(value string) bool {
+	v := strings.ToLower(strings.TrimSpace(value))
+	return v == "1" || v == "true"
 }
 
 func APIRemoteSourcesHandler(manager *subscription.RemoteManager) http.HandlerFunc {
